@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -q -m 'Add design spec for Kindle-style web reader *)",
+      "Bash(git commit -q -m 'Tighten spec: annotation cascade, exclude bookmarks from panel *)",
+      "Bash(git commit -q -m 'Spec: PDF covers generated client-side via PATCH endpoint *)"
+    ]
+  }
+}

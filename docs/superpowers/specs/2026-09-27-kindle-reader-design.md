@@ -93,6 +93,7 @@ POST   /books              multipart (file) → valida, extrae metadata+portada 
 GET    /books/:id          → 200 {book, progress} | 404
 DELETE /books/:id          → borra registro + archivos → 204
 PATCH  /books/:id/progress {position, percent} → upsert → 200
+PATCH  /books/:id/cover     multipart (image/jpeg) → guarda y actualiza cover_path → 200
 DELETE /books/:id/progress → reset "empezar desde el principio" → 204
 
 GET  /books/:id/annotations     → lista ordenada por posición de lectura
@@ -103,7 +104,8 @@ GET  /api/health                → 200 (usado por HEALTHCHECK)
 ```
 
 - Validación de subida por **magic bytes**: PDF `%PDF-`, EPUB zip `PK\x03\x04` + presencia de `mimetype` con `application/epub+zip`. Límite `MAX_UPLOAD_MB` (default 100). Si falla, se rechaza sin dejar archivos huérfanos.
-- Al subir, se procesa el libro en el servidor para extraer título/autor/páginas/capítulos y generar la portada: PDF via `pdfjs` en Node, EPUB via metadata OPF + cover. Si la extracción falla, se guarda con título = nombre de archivo y `cover_path = null` (la UI muestra portada generada con iniciales).
+- Al subir, el servidor extrae título/autor/páginas/capítulos: PDF via `pdf-lib` (metadata + conteo de páginas), EPUB via metadata OPF del zip. Si la extracción falla, se guarda con título = nombre de archivo y `cover_path = null` (la UI muestra portada generada con iniciales).
+- **Portadas:** la del EPUB se extrae del archivo en el servidor (bytes del zip). La del PDF se genera en el navegador (canvas de pdf.js sobre la página 1, JPEG 400 px de ancho) y se envía vía `PATCH /books/:id/cover` justo después del upload; hasta entonces la portada es el fallback de iniciales. Evita rasterizar en el servidor.
 
 ## 6. Progreso y retomar
 
