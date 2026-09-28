@@ -188,30 +188,37 @@ export default async function bookRoutes(app: FastifyInstance) {
     return typeof pos?.cfi === 'string' && pos.cfi.length > 0
   }
 
-  app.patch('/api/books/:id/progress', { preHandler: app.verifySession }, async (req, reply) => {
-    const { id } = req.params as { id: string }
-    const { rows } = await app.query<BookRow>(
-      'SELECT * FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
-    )
-    if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
-    const book = rows[0]
+  // PATCH lo usa el lector; POST es el alias equivalente porque
+  // navigator.sendBeacon sólo puede enviar POST (beacon al cerrar la página).
+  app.route({
+    method: ['POST', 'PATCH'],
+    url: '/api/books/:id/progress',
+    preHandler: app.verifySession,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string }
+      const { rows } = await app.query<BookRow>(
+        'SELECT * FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+      )
+      if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
+      const book = rows[0]
 
-    const { position, percent } = (req.body ?? {}) as { position?: unknown; percent?: unknown }
-    if (!validatePosition(book.format, position, book.total_pages)) {
-      return reply.code(400).send({ message: 'Posición inválida' })
-    }
-    const pct = Math.max(0, Math.min(100, Number(percent ?? 0)))
-    if (!Number.isFinite(pct)) return reply.code(400).send({ message: 'percent inválido' })
+      const { position, percent } = (req.body ?? {}) as { position?: unknown; percent?: unknown }
+      if (!validatePosition(book.format, position, book.total_pages)) {
+        return reply.code(400).send({ message: 'Posición inválida' })
+      }
+      const pct = Math.max(0, Math.min(100, Number(percent ?? 0)))
+      if (!Number.isFinite(pct)) return reply.code(400).send({ message: 'percent inválido' })
 
-    const { rows: up } = await app.query<{ position: unknown; percent: string; updated_at: string }>(
-      `INSERT INTO reading_progress (user_id, book_id, position, percent, updated_at)
-       VALUES ($1, $2, $3, $4, now())
-       ON CONFLICT (user_id, book_id) DO UPDATE SET position = $3, percent = $4, updated_at = now()
-       RETURNING position, percent, updated_at`,
-      [req.user!.id, book.id, JSON.stringify(position), pct],
-    )
-    // pg devuelve numeric como string: la API expone número (lo espera apps/web)
-    return { position: up[0].position, percent: Number(up[0].percent), updated_at: up[0].updated_at }
+      const { rows: up } = await app.query<{ position: unknown; percent: string; updated_at: string }>(
+        `INSERT INTO reading_progress (user_id, book_id, position, percent, updated_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (user_id, book_id) DO UPDATE SET position = $3, percent = $4, updated_at = now()
+         RETURNING position, percent, updated_at`,
+        [req.user!.id, book.id, JSON.stringify(position), pct],
+      )
+      // pg devuelve numeric como string: la API expone número (lo espera apps/web)
+      return { position: up[0].position, percent: Number(up[0].percent), updated_at: up[0].updated_at }
+    },
   })
 
   app.delete('/api/books/:id/progress', { preHandler: app.verifySession }, async (req, reply) => {

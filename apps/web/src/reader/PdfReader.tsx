@@ -138,6 +138,10 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      // si el foco está en un control (slider, botón, input…), sus teclas
+      // operan el control: ←/→ mueven el slider y espacio activa el botón
+      const target = e.target as HTMLElement | null
+      if (target?.closest?.('input, textarea, button, select, [role=slider], [role=menu]')) return
       switch (e.key) {
         case 'ArrowRight':
         case 'PageDown':

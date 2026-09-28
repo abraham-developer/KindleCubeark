@@ -27,6 +27,15 @@ function patchProgress(app: any, cookie: string, bookId: string, body: unknown) 
   })
 }
 
+function patchProgressPost(app: any, cookie: string, bookId: string, body: unknown) {
+  return app.inject({
+    method: 'POST',
+    url: `/api/books/${bookId}/progress`,
+    cookies: { session: cookie },
+    payload: body,
+  })
+}
+
 describe('progress', () => {
   it('upsert crea y luego actualiza la misma fila', async () => {
     const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
@@ -95,6 +104,33 @@ describe('progress', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().position).toEqual({ cfi: 'epubcfi(/6/4)', section: 1 })
     expect(res.json().percent).toBe(33.5)
+    await app.close()
+  })
+
+  it('POST es alias de PATCH (sendBeacon) con la misma semántica y una sola fila', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
+    const cookie = await registerAndGetCookie(app, 'progbeacon@test.dev')
+    const book = await uploadBook(app, cookie, await makeTestPdf(50, 'Beacon'))
+
+    // PATCH escribe primero; POST (beacon) actualiza la MISMA fila
+    await patchProgress(app, cookie, book.id, { position: { page: 1 }, percent: 2 })
+    const post = await app.inject({
+      method: 'POST',
+      url: `/api/books/${book.id}/progress`,
+      cookies: { session: cookie },
+      payload: { position: { page: 2 }, percent: 50 },
+    })
+    expect(post.statusCode).toBe(200)
+    expect(post.json().position).toEqual({ page: 2 })
+    expect(post.json().percent).toBe(50)
+    expect(post.json().updated_at).toBeTruthy()
+
+    const { rows } = await pool.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM reading_progress')
+    expect(Number(rows[0].count)).toBe(1)
+
+    // el POST valida igual que el PATCH (400 sin sesión/posición inválida)
+    expect((await app.inject({ method: 'POST', url: `/api/books/${book.id}/progress`, payload: { position: { page: 9999 } } })).statusCode).toBe(401)
+    expect((await patchProgressPost(app, cookie, book.id, { position: { page: 0 } })).statusCode).toBe(400)
     await app.close()
   })
 

@@ -92,8 +92,9 @@ export function useProgressSync(bookId: string): {
       if (!item) return
       if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
         const blob = new Blob([JSON.stringify({ position: item.position, percent: item.percent })], { type: 'application/json' })
-        navigator.sendBeacon(`/api/books/${bookId}/progress`, blob)
-        sync.clearPending() // evita el doble envío del flush en unmount
+        // false = el navegador no pudo encolar el beacon: queda pendiente para
+        // que flush()/reintento lo entregue por la vía normal
+        if (navigator.sendBeacon(`/api/books/${bookId}/progress`, blob)) sync.clearPending()
       }
     }
     window.addEventListener('pagehide', onHide)
