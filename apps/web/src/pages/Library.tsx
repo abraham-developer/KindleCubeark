@@ -1,11 +1,7 @@
 // apps/web/src/pages/Library.tsx — biblioteca: grilla, seguir leyendo, subida y menú contextual (Task 11).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { api, type Book } from '../api'
-
-GlobalWorkerOptions.workerSrc = workerUrl
 
 const ACCEPT = '.pdf,.epub'
 
@@ -173,8 +169,11 @@ function fileBytes(file: File): Promise<Uint8Array> {
   })
 }
 
-/** Genera una portada JPEG de 400 px desde la primera página de un PDF. */
+/** Genera una portada JPEG de 400 px desde la primera página de un PDF.
+ *  pdfjs se importa dinámicamente para no meterlo en el bundle principal. */
 export async function makePdfCover(file: File): Promise<Blob> {
+  const { getDocument, GlobalWorkerOptions } = await import('pdfjs-dist')
+  GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
   const data = await fileBytes(file)
   const doc = await getDocument({ data }).promise
   try {

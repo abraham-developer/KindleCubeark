@@ -137,3 +137,98 @@ button { font-family: var(--serif); }
 .lib-alert { margin: 0 0 16px; font-size: .9rem; color: var(--danger); }
 .empty-state { text-align: center; padding: 64px 16px; color: var(--ink-soft); }
 .empty-state h2 { font-weight: 400; color: var(--ink); margin: 0 0 8px; }
+/* Lector (Task 12) */
+.reader {
+  position: fixed; inset: 0; z-index: 10;
+  display: flex; flex-direction: column;
+  background: var(--paper); color: var(--ink);
+}
+.reader-stage {
+  position: relative; flex: 1; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  perspective: 1200px; touch-action: pan-y;
+}
+.reader-loading, .reader-error { position: absolute; z-index: 4; color: var(--ink-soft); font-size: .9rem; }
+.reader-error { padding: 0 16px; text-align: center; }
+
+/* Volteo 3D: el wrapper anima el único canvas activo con sombra dinámica. */
+.page-turn {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  backface-visibility: hidden;
+}
+.page-turn::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+}
+.turn-next { transform-origin: left center; animation: turn-next 350ms ease-out both; }
+.turn-prev { transform-origin: right center; animation: turn-prev 350ms ease-out both; }
+.turn-next::after {
+  background: linear-gradient(to right, transparent 55%, rgba(0, 0, 0, .38));
+  animation: turn-shadow-next 350ms ease-out both;
+}
+.turn-prev::after {
+  background: linear-gradient(to left, transparent 55%, rgba(0, 0, 0, .38));
+  animation: turn-shadow-prev 350ms ease-out both;
+}
+@keyframes turn-next {
+  from { transform: rotateY(-24deg); opacity: .4; }
+  to { transform: rotateY(0); opacity: 1; }
+}
+@keyframes turn-prev {
+  from { transform: rotateY(24deg); opacity: .35; }
+  to { transform: rotateY(0); opacity: 1; }
+}
+@keyframes turn-shadow-next { from { opacity: 1; } to { opacity: 0; } }
+@keyframes turn-shadow-prev { from { opacity: 1; } to { opacity: 0; } }
+
+/* En modo noche el volteo es un fade simple (el filtro 3D complica la lectura invertida). */
+.page-turn.night, .page-turn.night.turn-next, .page-turn.night.turn-prev {
+  animation: turn-fade 250ms ease-out both;
+  transform: none;
+}
+.page-turn.night::after { animation: none; opacity: 0; }
+@keyframes turn-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.pdf-canvas {
+  max-width: 100%; max-height: 100%;
+  background: #fff; box-shadow: 0 2px 10px var(--shadow);
+}
+/* Modo noche: inversión real del PDF vía filtro CSS, sin tocar los píxeles. */
+.pdf-canvas.night { filter: invert(0.88) hue-rotate(180deg); }
+
+/* Zonas de tap (40 % / 20 % / 40 %) */
+.reader-zone {
+  position: absolute; top: 0; bottom: 0; z-index: 3;
+  width: 40%; padding: 0; border: 0; background: transparent;
+  cursor: pointer;
+}
+.reader-zone.left { left: 0; }
+.reader-zone.right { right: 0; }
+.reader-zone.center { left: 40%; width: 20%; cursor: default; }
+.reader-zone:disabled { cursor: default; }
+.reader-zone:focus-visible { outline: 1px dashed var(--accent); outline-offset: -4px; }
+
+/* Barras de chrome (compartidas con los lectores EPUB en Tasks 13–14) */
+.reader-top, .reader-bottom {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; background: var(--paper-raised);
+  border-bottom: 1px solid var(--line); flex: none;
+}
+.reader-bottom { border-bottom: 0; border-top: 1px solid var(--line); padding: 8px 14px; }
+.reader-back {
+  border: 0; background: none; color: var(--accent); cursor: pointer;
+  font-family: var(--serif); font-size: .95rem; padding: 4px 6px; flex: none;
+}
+.reader-title {
+  margin: 0; flex: 1; min-width: 0; text-align: center;
+  font-size: .98rem; font-weight: 400; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.reader-tool {
+  flex: none; font-family: var(--serif); font-size: .82rem; cursor: pointer;
+  padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+}
+.reader-slider { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.reader-label { font-size: .8rem; color: var(--ink-soft); white-space: nowrap; }
+.reader-pct { font-size: .8rem; color: var(--ink-soft); min-width: 38px; text-align: right; }
