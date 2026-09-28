@@ -177,6 +177,50 @@ export default async function bookRoutes(app: FastifyInstance) {
     return toClient(updated[0])
   })
 
+  // la posición se valida por formato: PDF → page int ≥ 1 ≤ total_pages (si se conoce);
+  // EPUB → cfi string no vacía (percent/section opcionales)
+  function validatePosition(format: string, position: unknown, totalPages: number | null): boolean {
+    const pos = position as { page?: unknown; cfi?: unknown } | null | undefined
+    if (format === 'pdf') {
+      return typeof pos?.page === 'number' && Number.isInteger(pos.page) && pos.page >= 1 &&
+        (totalPages == null || pos.page <= totalPages)
+    }
+    return typeof pos?.cfi === 'string' && pos.cfi.length > 0
+  }
+
+  app.patch('/api/books/:id/progress', { preHandler: app.verifySession }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { rows } = await app.query<BookRow>(
+      'SELECT * FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+    )
+    if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
+    const book = rows[0]
+
+    const { position, percent } = (req.body ?? {}) as { position?: unknown; percent?: unknown }
+    if (!validatePosition(book.format, position, book.total_pages)) {
+      return reply.code(400).send({ message: 'Posición inválida' })
+    }
+    const pct = Math.max(0, Math.min(100, Number(percent ?? 0)))
+    if (!Number.isFinite(pct)) return reply.code(400).send({ message: 'percent inválido' })
+
+    const { rows: up } = await app.query<{ position: unknown; percent: string; updated_at: string }>(
+      `INSERT INTO reading_progress (user_id, book_id, position, percent, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (user_id, book_id) DO UPDATE SET position = $3, percent = $4, updated_at = now()
+       RETURNING position, percent, updated_at`,
+      [req.user!.id, book.id, JSON.stringify(position), pct],
+    )
+    // pg devuelve numeric como string: la API expone número (lo espera apps/web)
+    return { position: up[0].position, percent: Number(up[0].percent), updated_at: up[0].updated_at }
+  })
+
+  app.delete('/api/books/:id/progress', { preHandler: app.verifySession }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    // idempotente: sin fila (ya reseteado o ajeno) es igualmente 204
+    await app.query('DELETE FROM reading_progress WHERE book_id = $1 AND user_id = $2', [id, req.user!.id])
+    return reply.code(204).send()
+  })
+
   // sirve el libro o la portada del dueño; recurso ajeno o inexistente → 404 (nunca 403)
   app.get('/api/files/:userId/:file', { preHandler: app.verifySession }, async (req, reply) => {
     const { userId, file } = req.params as { userId: string; file: string }
