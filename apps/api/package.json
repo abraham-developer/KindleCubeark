@@ -1,0 +1,30 @@
+{
+  "name": "kindlecubeark-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../.env.local src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/multipart": "^8",
+    "@fastify/secure-session": "^7",
+    "@fastify/static": "^7",
+    "adm-zip": "^0.5",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^4",
+    "pdf-lib": "^1.17.1",
+    "pg": "^8.11"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20",
+    "@types/pg": "^8.11",
+    "tsx": "^4",
+    "typescript": "^5.5",
+    "vitest": "^2"
+  }
+}
