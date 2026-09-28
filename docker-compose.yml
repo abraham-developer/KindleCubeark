@@ -1,0 +1,33 @@
+# compose de DESARROLLO: credenciales en claro a propósito (dev), en Swarm
+# van por docker secrets (deploy/swarm.yml). Uso: docker compose up -d
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kindle
+      POSTGRES_PASSWORD: kindle
+      POSTGRES_DB: kindle
+    ports: ["5432:5432"]
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kindle"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  app:
+    build: .
+    environment:
+      # en claro solo en dev: en producción la contraseña llega por secret
+      DATABASE_URL: postgres://kindle:kindle@db:5432/kindle
+      DATA_DIR: /data
+      MAX_UPLOAD_MB: "100"
+      SESSION_SECRET: dev-secret-change-me-0123456789abcdef
+      NODE_ENV: development
+    ports: ["3000:3000"]
+    volumes: [bookdata:/data]
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  dbdata: {}
+  bookdata: {}

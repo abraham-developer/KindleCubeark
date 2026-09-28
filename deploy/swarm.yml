@@ -1,0 +1,110 @@
+# Stack de PRODUCCIÓN para Docker Swarm (single-node o manager con registry).
+# La red overlay `admin` es la existente donde corre traefik (external).
+# Uso: docker stack deploy -c deploy/swarm.yml kindle
+# Requiere secrets creados antes: kindle_db_password y kindle_session_secret.
+version: "3.8"
+
+services:
+  app:
+    # construida/etiquetada en el manager con podman build -t kindlecubeark:latest .
+    # (o push al registry si el stack corre en más de un nodo)
+    image: kindlecubeark:latest
+    environment:
+      NODE_ENV: production
+      DATA_DIR: /data
+      MAX_UPLOAD_MB: "100"
+      # credenciales de db por secret: config.ts arma DATABASE_URL con estos datos
+      DB_HOST: db
+      DB_USER: kindle
+      DB_NAME: kindle
+      DB_PASSWORD_FILE: /run/secrets/kindle_db_password
+      SESSION_SECRET_FILE: /run/secrets/kindle_session_secret
+    secrets:
+      - kindle_db_password
+      - kindle_session_secret
+    volumes:
+      - kindle_book_data:/data
+    networks:
+      - internal
+      - admin
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      resources:
+        limits:
+          memory: 1G
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.kindle.rule=Host(`kindle.cubeark.dev`)
+      - traefik.http.routers.kindle.entrypoints=websecure
+      - traefik.http.routers.kindle.tls.certresolver=letsencryptresolver
+      - traefik.http.routers.kindle.service=kindle
+      - traefik.http.services.kindle.loadbalancer.server.port=3000
+      - traefik.http.services.kindle.loadbalancer.passHostHeader=1
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kindle
+      POSTGRES_DB: kindle
+      POSTGRES_PASSWORD_FILE: /run/secrets/kindle_db_password
+    secrets:
+      - kindle_db_password
+    volumes:
+      - kindle_db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kindle"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+secrets:
+  kindle_db_password:
+    external: true
+  kindle_session_secret:
+    external: true
+
+volumes:
+  kindle_book_data: {}
+  kindle_db_data: {}
+
+networks:
+  # red overlay externa del dueño donde corre traefik (entrypoint websecure
+  # + certresolver letsencryptresolver). NO publicar puertos host del app.
+  admin:
+    external: true
+    name: admin
+  internal:
+    driver: overlay
+    internal: true
+    driver_opts:
+      encrypted: ""
