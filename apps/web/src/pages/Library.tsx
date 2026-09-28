@@ -272,7 +272,7 @@ export default function Library() {
             <option value="titulo">Título</option>
           </select>
           <button type="button" className="btn" aria-label="Cerrar sesión"
-            onClick={() => { void signOut().then(() => navigate('/login')) }}>
+            onClick={() => { void signOut().finally(() => navigate('/login')) }}>
             Salir
           </button>
         </div>

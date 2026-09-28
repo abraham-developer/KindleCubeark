@@ -77,8 +77,9 @@ docker secret ls
 ```
 
 (`kindle_session_secret` debe tener EXACTAMENTE 32 bytes: es la clave de
-`@fastify/secure-session`, que lanza «key must be 32 bytes» con cualquier otra
-longitud. `openssl rand -hex 16` produce 32 caracteres hex = 32 bytes.)
+`@fastify/secure-session`; uno más corto lanza «key must be 32 bytes» y uno
+más largo se trunca silenciosamente a 32. `openssl rand -hex 16` produce
+32 caracteres hex = 32 bytes.)
 
 ### 3. Build y etiquetado de la imagen (en el manager)
 
