@@ -33,10 +33,18 @@ export default function Reader() {
     return () => { alive = false }
   }, [bookId])
 
-  if (error) return <div className="page-center" role="alert">{error}</div>
+  const onBack = () => navigate('/')
+
+  if (error) {
+    return (
+      <div className="page-center" role="alert">
+        <p>{error}</p>
+        <button type="button" className="btn" onClick={onBack}>Volver a la biblioteca</button>
+      </div>
+    )
+  }
   if (!loaded) return <div className="page-center">Cargando…</div>
 
-  const onBack = () => navigate('/')
   const Inner = loaded.book.format === 'epub' ? EpubReader : PdfReader
   return (
     <Suspense fallback={<div className="page-center">Cargando…</div>}>
