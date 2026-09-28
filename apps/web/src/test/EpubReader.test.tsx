@@ -186,10 +186,10 @@ describe('EpubReader', () => {
     expect(renditionFns.themes.select).toHaveBeenCalledWith('night')
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
 
-    // vuelta al día
+    // vuelta al día: no se fuerza tema global (igual que el lector PDF)
     fireEvent.click(panel.getByRole('button', { name: /modo día/i }))
     expect(renditionFns.themes.select).toHaveBeenCalledWith('day')
-    expect(document.documentElement).toHaveAttribute('data-theme', 'light')
+    expect(document.documentElement).not.toHaveAttribute('data-theme')
   })
 
   it('prev/next con zonas de tap y teclado; el slider salta por porcentaje', async () => {

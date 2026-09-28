@@ -64,9 +64,16 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   // resume: guardarlo re-escribiría en el server la posición recién cargada
   // (y con locations aún sin generar, el percent puede divergir del guardado).
   const firstRelocatedRef = useRef(true)
+  // Timestamp del último arrastre del slider: mientras sigue vivo, el
+  // relocated del salto no pisa el percent local que ve el usuario.
+  const sliderMovedAt = useRef(0)
 
   const sync = useProgressSync(book.id)
-  settingsRef.current = settings
+
+  // Ref de ajustes para los callbacks/effect que no deben recrearse por cambio.
+  useEffect(() => {
+    settingsRef.current = settings
+  }, [settings])
 
   const night = settings.theme === 'night'
 
@@ -74,7 +81,9 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     const start = location?.start
     if (!start) return
     const pct = Math.round((start.percentage ?? 0) * 1000) / 10
-    setPercent(pct)
+    // durante (y justo después de) un arrastre del slider, el percent que
+    // pinta la barra lo manda el usuario, no el relocated del salto
+    if (Date.now() - sliderMovedAt.current > 500) setPercent(pct)
     setChapter(tocTitle(bookRef.current?.navigation as { toc?: NavItem[] } | undefined, start.href))
     if (firstRelocatedRef.current) {
       firstRelocatedRef.current = false // eco del resume: no re-guarda
@@ -134,8 +143,14 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   }, [settings, loading])
 
   // ── Modo noche global: las barras de chrome siguen el mismo tema ────────
+  // En día no se fuerza tema global (igual que el lector PDF): sólo se marca
+  // la noche, y al salir del modo —o del lector— se restaura el de la app.
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme === 'night' ? 'dark' : 'light'
+    if (settings.theme === 'night') {
+      document.documentElement.dataset.theme = 'dark'
+    } else {
+      document.documentElement.removeAttribute('data-theme')
+    }
     return () => { document.documentElement.removeAttribute('data-theme') }
   }, [settings.theme])
 
@@ -275,6 +290,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
             aria-label="Ir a posición"
             onChange={e => {
               const value = Number(e.target.value)
+              sliderMovedAt.current = Date.now() // el salto manda sobre el relocated
               setPercent(value)
               jumpToPercent(value)
             }}
