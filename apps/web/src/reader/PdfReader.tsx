@@ -75,6 +75,11 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const stageRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const docRef = useRef<PDFDocumentProxy | null>(null)
+  // render de pdf.js en curso: hay que cancelarlo (y esperar la cancelación)
+  // antes de renderizar de nuevo el mismo canvas — pdf.js lanza «Cannot use
+  // the same canvas during multiple render() operations» si se pisa. (En los
+  // tests el render es fake y puede venir sin cancel().)
+  const renderTaskRef = useRef<{ cancel?(): void; promise: Promise<unknown> } | null>(null)
   const renderToken = useRef(0)
   const lastSaved = useRef<number | null>(page)
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
@@ -108,6 +113,11 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }, [book.file_url])
 
   // ── Render de la página activa (único canvas; re-render al cambiar fit/tamaño) ──
+  // El canvas se pinta a la densidad del dispositivo (devicePixelRatio): sin
+  // esto, en pantallas HiDPI el navegador estira el backing store 1× y el
+  // texto se ve borroso. Y pdf.js no admite dos render() en el mismo canvas:
+  // el render anterior (re-render de la misma página por resize/fit) se
+  // cancela y se espera su cancelación antes de volver a renderizar.
   useEffect(() => {
     const doc = docRef.current
     if (!doc || !page || !numPages) return
@@ -121,22 +131,39 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         const w = Math.max(stage?.clientWidth ?? 0, 1)
         const h = Math.max(stage?.clientHeight ?? 0, 1)
         const base = pdfPage.getViewport({ scale: 1 })
-        const scale = fit === 'width' ? w / base.width : Math.min(w / base.width, h / base.height)
-        const viewport = pdfPage.getViewport({ scale: Math.max(scale, 0.05) })
+        const cssScale = Math.max(
+          fit === 'width' ? w / base.width : Math.min(w / base.width, h / base.height), 0.05)
+        const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3))
+        const cssViewport = pdfPage.getViewport({ scale: cssScale })
+        // tope de área como pdf.js viewer: canvas demasiado grande en iOS queda
+        // en blanco; si excede, se reduce el dpr antes que romper el render
+        let renderScale = cssScale * dpr
+        const maxPixels = 16_000_000
+        if (cssViewport.width * cssViewport.height * dpr * dpr > maxPixels) {
+          renderScale = Math.max(cssScale,
+            Math.sqrt(maxPixels / (cssViewport.width * cssViewport.height)))
+        }
+        const renderViewport = pdfPage.getViewport({ scale: renderScale })
         const canvas = canvasRef.current
         const ctx = canvas?.getContext('2d')
         if (cancelled || token !== renderToken.current || !canvas || !ctx) return
-        canvas.width = Math.round(viewport.width)
-        canvas.height = Math.round(viewport.height)
+        canvas.width = Math.round(renderViewport.width)
+        canvas.height = Math.round(renderViewport.height)
         // tamaño CSS explícito: el wrapper (.pdf-page) queda exactamente sobre el
         // canvas y las capas (texto/resaltados) se posicionan en porcentajes
-        canvas.style.width = `${Math.round(viewport.width)}px`
-        canvas.style.height = `${Math.round(viewport.height)}px`
-        await pdfPage.render({ canvasContext: ctx, viewport }).promise
+        canvas.style.width = `${Math.round(cssViewport.width)}px`
+        canvas.style.height = `${Math.round(cssViewport.height)}px`
+        const prev = renderTaskRef.current
+        if (prev) { prev.cancel?.(); await prev.promise.catch(() => { /* cancelado */ }) }
+        if (cancelled || token !== renderToken.current) return
+        const task = pdfPage.render({ canvasContext: ctx, viewport: renderViewport })
+        renderTaskRef.current = task
+        await task.promise
         if (cancelled || token !== renderToken.current) return
         // TextLayer (pdf.js) sobre el canvas: hace seleccionable el texto. Es
         // accesorio: si falla (o en tests, donde pdfjs está mockeado sin
-        // TextLayer), la página se muestra igual.
+        // TextLayer), la página se muestra igual. Va con el viewport CSS (el
+        // render va escalado por dpr, pero la capa vive en px lógicos).
         const layer = textLayerRef.current
         if (layer) {
           layer.textContent = ''
@@ -145,10 +172,10 @@ export default function PdfReader({ book, progress, onBack }: Props) {
               TextLayer?: new (options: { textContentSource: unknown; container: HTMLElement; viewport: unknown }) => { render(): Promise<void> }
             }).TextLayer
             if (TextLayerCtor) {
-              layer.style.setProperty('--scale-factor', String(viewport.scale))
+              layer.style.setProperty('--scale-factor', String(cssViewport.scale))
               const content = await pdfPage.getTextContent()
               if (cancelled || token !== renderToken.current) return
-              await new TextLayerCtor({ textContentSource: content, container: layer, viewport }).render()
+              await new TextLayerCtor({ textContentSource: content, container: layer, viewport: cssViewport }).render()
             }
           } catch { /* el texto es seleccionable sólo si el text layer funciona */ }
         }
@@ -157,7 +184,10 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         if (!cancelled) setLoadError(`No se pudo mostrar la página: ${errorMessage(err)}`)
       }
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      renderTaskRef.current?.cancel?.()
+    }
   }, [page, fit, size, numPages])
 
   // ── Anotaciones del libro (una sola descarga; el POST/borrado actualiza) ──

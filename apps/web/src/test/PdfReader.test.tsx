@@ -14,6 +14,12 @@ import Reader from '../reader/Reader'
 vi.mock('pdfjs-dist', () => ({
   getDocument: vi.fn(),
   GlobalWorkerOptions: { workerSrc: '' },
+  // TextLayer fake: el lector lo construye tras el render de la página; en el
+  // mock sólo registra las opciones (el --scale-factor se fija antes).
+  TextLayer: class {
+    constructor(public options: unknown) {}
+    async render() { /* jsdom no pinta */ }
+  },
 }))
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.mjs' }))
 
@@ -150,8 +156,7 @@ describe('PdfReader', () => {
     expect(screen.queryByText(/jardinería/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Página anterior' }))
-    expect(await until(() => pages.has(6))).toBe(true)
-    expect(pages.get(6)!.render).toHaveBeenCalled()
+    expect(await until(() => (pages.get(6)?.render.mock.calls.length ?? 0) >= 1)).toBe(true)
 
     fireEvent.click(screen.getByRole('button', { name: 'Página siguiente' }))
     await until(() => (pages.get(7)?.render.mock.calls.length ?? 0) === 2)
@@ -162,9 +167,74 @@ describe('PdfReader', () => {
     expect(screen.getByText('58%')).toBeInTheDocument()
 
     fireEvent.change(screen.getByRole('slider', { name: /ir a página/i }), { target: { value: '3' } })
-    expect(await until(() => pages.has(3))).toBe(true)
-    expect(pages.get(3)!.render).toHaveBeenCalled()
+    expect(await until(() => (pages.get(3)?.render.mock.calls.length ?? 0) >= 1)).toBe(true)
     expect(screen.getByText('pág. 3 de 12')).toBeInTheDocument()
+  })
+
+  it('un re-render de la misma página cancela el render anterior (no dos render() en un canvas)', async () => {
+    // pdf.js real lanza «Cannot use the same canvas during multiple render()
+    // operations» si se llama render() de nuevo sobre el mismo canvas con el
+    // render anterior aún en curso: el fake reproduce esa regla.
+    let active = false
+    let releaseFirst!: () => void
+    const firstDone = new Promise<void>(resolve => { releaseFirst = resolve })
+    const page7 = {
+      ...makePage(7),
+      render: vi.fn(() => {
+        if (active) {
+          throw new Error('Cannot use the same canvas during multiple render() operations. Use different canvas or ensure previous operations were cancelled or completed')
+        }
+        active = true
+        return {
+          promise: firstDone.then(() => { active = false }),
+          cancel: () => { active = false; releaseFirst() },
+        }
+      }),
+    }
+    pages.set(7, page7)
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []) })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => page7.render.mock.calls.length === 1)
+    expect(screen.queryByText(/No se pudo mostrar la página/i)).toBeNull()
+
+    // el resize del stage (barra del navegador al scrollear) re-renderiza la
+    // MISMA página sobre el MISMO canvas: el render anterior debe cancelarse
+    fireEvent.resize(window)
+    expect(await until(() => page7.render.mock.calls.length === 2)).toBe(true)
+    expect(screen.queryByText(/Cannot use the same canvas/i)).toBeNull()
+    expect(screen.queryByText(/No se pudo mostrar la página/i)).toBeNull()
+  })
+
+  it('renderiza el canvas a la densidad del dispositivo (nítido en pantallas HiDPI)', async () => {
+    const dprDesc = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio')
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 })
+    try {
+      // viewport dependiente de la escala (600×800 a escala 1)
+      const page7 = {
+        ...makePage(7),
+        getViewport: vi.fn(({ scale }: { scale: number }) =>
+          ({ width: 600 * scale, height: 800 * scale, scale })),
+      }
+      pages.set(7, page7)
+      apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []) })))
+      renderReader({ position: { page: 7 }, percent: '70' })
+      expect(await until(() => page7.render.mock.calls.length === 1)).toBe(true)
+
+      const canvas = document.querySelector('canvas') as HTMLCanvasElement
+      // stage de 1×1 en jsdom → cssScale mínimo 0.05 → CSS 30×40, render a dpr 2 → 60×80
+      expect(page7.render).toHaveBeenCalledWith(expect.objectContaining({
+        viewport: expect.objectContaining({ width: 60, height: 80 }),
+      }))
+      // el backing store es HiDPI y el tamaño CSS queda en px lógicos
+      expect(canvas.width).toBe(60)
+      expect(canvas.style.width).toBe('30px')
+      // el text layer se escala por CSS (no por dpr): --scale-factor = 0.05
+      const layer = document.querySelector('.textLayer') as HTMLElement
+      expect(layer.style.getPropertyValue('--scale-factor')).toBe('0.05')
+    } finally {
+      if (dprDesc) Object.defineProperty(window, 'devicePixelRatio', dprDesc)
+      else delete (window as { devicePixelRatio?: number }).devicePixelRatio
+    }
   })
 
   it('el modo noche invierte el canvas con un filtro CSS (no píxeles)', async () => {
