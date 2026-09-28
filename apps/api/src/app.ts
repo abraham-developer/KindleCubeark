@@ -6,6 +6,8 @@ import session from './plugins/session.js'
 import { verifySession } from './plugins/auth.js'
 import health from './routes/health.js'
 import auth from './routes/auth.js'
+import books from './routes/books.js'
+import multipart from '@fastify/multipart'
 
 export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<ReturnType<typeof loadConfig>> } = {}) {
   const config = { ...loadConfig(), ...opts.config }
@@ -22,10 +24,13 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
   // sin fastify-plugin: se llama directo para que @fastify/secure-session
   // (que sí es fp) decore la instancia raíz y req.session sea visible
   await session(app)
+  // multipart siempre registrado (no lo afecta skipStatic)
+  await app.register(multipart, { attachFieldsToBody: false })
   app.decorate('query', (sql, values) => query(sql, values))
   app.decorateRequest('user', null)
   app.decorate('verifySession', verifySession)
   await app.register(health)
   await app.register(auth)
+  await app.register(books)
   return app
 }
