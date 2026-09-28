@@ -133,20 +133,28 @@ describe('EpubReader', () => {
     expect(await until(() => bookFns.locations.generate.mock.calls.length === 1)).toBe(true)
   })
 
-  it('el evento relocated guarda {cfi, percent, section} tras el debounce', async () => {
+  it('el relocated del resume no re-guarda la posición recién cargada; los siguientes sí', async () => {
     const { patchProgress } = renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
     await until(() => handlers.has('relocated'))
 
+    // 1.er relocated tras el mount: el eco del propio display(savedCfi) —
+    // no debe encolar el PATCH (posición idéntica a la ya guardada).
+    act(() => {
+      handlers.get('relocated')!({
+        start: { cfi: 'epubcfi(/6/4)', percentage: 0.7, index: 2 },
+        end: { cfi: 'epubcfi(/6/5)', percentage: 0.75, index: 3 },
+      })
+    })
+    await realSleep(1700) // más que el debounce: nada puede haberse programado
+    expect(patchProgress).not.toHaveBeenCalled()
+
+    // relocated posterior (vuelta de página real) sí guarda
     act(() => {
       handlers.get('relocated')!({
         start: { cfi: 'epubcfi(/6/8)', percentage: 0.8, index: 4 },
         end: { cfi: 'epubcfi(/6/9)', percentage: 0.85, index: 5 },
       })
     })
-
-    expect(patchProgress).not.toHaveBeenCalled() // debounce de 1,5 s en curso
-    await realSleep(600)
-    expect(patchProgress).not.toHaveBeenCalled()
     expect(await until(() => patchProgress.mock.calls.length === 1, 120)).toBe(true)
     const [id, position, percent] = patchProgress.mock.calls[0]
     expect(id).toBe('bk-epub')

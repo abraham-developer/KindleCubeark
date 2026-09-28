@@ -60,6 +60,10 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   const settingsRef = useRef(settings)
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
   const swipedAt = useRef(0)
+  // El primer relocated tras el mount es el eco del propio display() de
+  // resume: guardarlo re-escribiría en el server la posición recién cargada
+  // (y con locations aún sin generar, el percent puede divergir del guardado).
+  const firstRelocatedRef = useRef(true)
 
   const sync = useProgressSync(book.id)
   settingsRef.current = settings
@@ -72,6 +76,10 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     const pct = Math.round((start.percentage ?? 0) * 1000) / 10
     setPercent(pct)
     setChapter(tocTitle(bookRef.current?.navigation as { toc?: NavItem[] } | undefined, start.href))
+    if (firstRelocatedRef.current) {
+      firstRelocatedRef.current = false // eco del resume: no re-guarda
+      return
+    }
     sync.save({ cfi: start.cfi, percent: pct, section: start.index }, pct)
   }, [sync])
 
@@ -82,6 +90,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     let cancelled = false
     setLoading(true)
     setLoadError(null)
+    firstRelocatedRef.current = true // el eco del resume pertenece a este libro
 
     // epubjs tipa requestCredentials como «object», pero en runtime es un
     // boolean (xhr.withCredentials, para la cookie de sesión): se castea.
