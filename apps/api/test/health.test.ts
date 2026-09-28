@@ -14,4 +14,15 @@ describe('health', () => {
     expect(res.statusCode).toBe(404)
     expect(res.json().message).toBeTruthy()
   })
+  it('POST con cuerpo JSON a ruta desconocida → 404 JSON, no 413', async () => {
+    const app = await buildApp({ skipStatic: true })
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/nope',
+      payload: { hello: 'mundo con un cuerpo de más de un byte' },
+      headers: { 'content-type': 'application/json' },
+    })
+    expect(res.statusCode).toBe(404)
+    expect(res.json().message).toBeTruthy()
+  })
 })
