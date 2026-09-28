@@ -220,6 +220,54 @@ describe('annotations', () => {
     await app.close()
   })
 
+  it('bookmark cruzado se rechaza: highlight+bookmark y note+bookmark con texto → 400', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
+    const cookie = await registerAndGetCookie(app, 'annmarkval@test.dev')
+    const pdf = await uploadBook(app, cookie, await makeTestPdf(5, 'Marcas inválidas'))
+    const rect = { x: 0, y: 0, w: 1, h: 1 }
+
+    // un marcador no puede ser highlight
+    const badKind = await postAnnotation(app, cookie, pdf.id, {
+      kind: 'highlight', position: { page: 1, rects: [rect] }, color: 'bookmark',
+    })
+    expect(badKind.statusCode).toBe(400)
+    expect(badKind.json().message).toBe('Un marcador no puede tener texto ni resaltado')
+
+    // ni llevar nota ni texto citado
+    const badNote = await postAnnotation(app, cookie, pdf.id, {
+      kind: 'note', position: { page: 1 }, color: 'bookmark', note: 'no debería',
+    })
+    expect(badNote.statusCode).toBe(400)
+    expect(badNote.json().message).toBe('Un marcador no puede tener texto ni resaltado')
+
+    const badQuote = await postAnnotation(app, cookie, pdf.id, {
+      kind: 'note', position: { page: 1 }, color: 'bookmark', quoted_text: 'tampoco esto',
+    })
+    expect(badQuote.statusCode).toBe(400)
+
+    // nada se escribió para los inválidos
+    const { rows } = await pool.query('SELECT COUNT(*) FROM annotations')
+    expect(Number(rows[0].count)).toBe(0)
+    await app.close()
+  })
+
+  it('misma posición: el orden secundario created_at mantiene el orden de creación', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
+    const cookie = await registerAndGetCookie(app, 'anntie@test.dev')
+    const book = await uploadBook(app, cookie, await makeTestPdf(5, 'Empate'))
+
+    const first = await postAnnotation(app, cookie, book.id, {
+      kind: 'highlight', position: { page: 2, rects: [{ x: 0, y: 0, w: 1, h: 1 }] },
+    })
+    const second = await postAnnotation(app, cookie, book.id, {
+      kind: 'highlight', position: { page: 2, rects: [{ x: 0.2, y: 0.2, w: 0.2, h: 0.2 }] },
+    })
+
+    const list = (await listAnnotations(app, cookie, book.id)).json()
+    expect(list.map((a: { id: string }) => a.id)).toEqual([first.json().id, second.json().id])
+    await app.close()
+  })
+
   it('DELETE de libro borra sus anotaciones (cascade)', async () => {
     const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
     const cookie = await registerAndGetCookie(app, 'annbook@test.dev')

@@ -98,12 +98,18 @@ export default async function annotationRoutes(app: FastifyInstance) {
       [id, req.user!.id],
     )
     // comparación por puntos de código (no localeCompare): determinista y
-    // idéntica a la que hará el cliente al reutilizar positionSortKey
+    // idéntica a la que hará el cliente al reutilizar positionSortKey.
+    // Claves secundarias created_at y luego id: dos anotaciones en la misma
+    // posición quedan siempre en el mismo orden
     const format = books[0].format
     return rows.sort((a, b) => {
       const ka = positionSortKey(a.position, format)
       const kb = positionSortKey(b.position, format)
-      return ka < kb ? -1 : ka > kb ? 1 : 0
+      if (ka !== kb) return ka < kb ? -1 : 1
+      const ta = new Date(a.created_at).getTime()
+      const tb = new Date(b.created_at).getTime()
+      if (ta !== tb) return ta < tb ? -1 : 1
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
     })
   })
 
@@ -131,6 +137,10 @@ export default async function annotationRoutes(app: FastifyInstance) {
     const noteText = text(body.note)
     if (quoted == null || noteText == null) {
       return reply.code(400).send({ message: 'quoted_text y note deben ser texto' })
+    }
+    // el marcador es puro: kind note, sin texto citado ni nota
+    if (color === 'bookmark' && (kind !== 'note' || quoted !== '' || noteText !== '')) {
+      return reply.code(400).send({ message: 'Un marcador no puede tener texto ni resaltado' })
     }
 
     // la posición se guarda verbatim (jsonb), igual que en reading_progress
