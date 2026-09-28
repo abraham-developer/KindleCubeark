@@ -1,5 +1,6 @@
 import Fastify from 'fastify'
 import { loadConfig } from './config.js'
+import { migrate } from './migrate.js'
 import health from './routes/health.js'
 
 export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<ReturnType<typeof loadConfig>> } = {}) {
@@ -13,6 +14,7 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
     reply.status(status).send({ message: status >= 500 ? 'Error interno' : err.message })
   })
   app.setNotFoundHandler((_req, reply) => reply.status(404).send({ message: 'No encontrado' }))
+  if (config.runMigrations) await migrate()
   await app.register(health)
   return app
 }
