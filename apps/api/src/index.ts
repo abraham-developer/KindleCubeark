@@ -1,3 +1,7 @@
-// Placeholder para que `tsc --noEmit` pase en el scaffold (Task 1).
-// Task 2 reemplaza este archivo con el esqueleto real de la API.
-export {}
+import { buildApp } from './app.js'
+import { loadConfig } from './config.js'
+
+const app = await buildApp()
+const cfg = loadConfig()
+await app.listen({ port: cfg.port, host: '0.0.0.0' })
+app.log.info(`api escuchando en :${cfg.port}`)
