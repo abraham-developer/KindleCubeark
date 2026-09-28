@@ -3,6 +3,10 @@ import type { FastifyInstance } from 'fastify'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
+// hash real (de 'invalid') para pagar una comparación bcrypt aunque el email no exista,
+// y así igualar el tiempo de respuesta entre credenciales correctas/incorrectas
+const DUMMY_HASH = '$2a$10$f7LAqEcUc9Hbyu52kT786OAYa2JbY0TUA2u0vxipM2HBpgvzun3gq'
+
 export default async function authRoutes(app: FastifyInstance) {
   app.post('/api/auth/register', async (req, reply) => {
     const { email, password } = req.body as { email?: string; password?: string }
@@ -28,8 +32,10 @@ export default async function authRoutes(app: FastifyInstance) {
       'SELECT id, password_hash, email FROM users WHERE email = $1',
       [(email ?? '').toLowerCase()],
     )
-    if (!rows.length || !(await bcrypt.compare(password ?? '', rows[0].password_hash)))
-      return reply.code(401).send({ message: 'Email o contraseña incorrectos' })
+    const ok = rows.length
+      ? await bcrypt.compare(password ?? '', rows[0].password_hash)
+      : await bcrypt.compare(password ?? '', DUMMY_HASH)
+    if (!ok) return reply.code(401).send({ message: 'Email o contraseña incorrectos' })
     req.session.set('userId', rows[0].id)
     return { id: rows[0].id, email: rows[0].email }
   })
