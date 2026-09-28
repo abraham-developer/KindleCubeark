@@ -196,6 +196,33 @@ button { font-family: var(--serif); }
 /* Modo noche: inversión real del PDF vía filtro CSS, sin tocar los píxeles. */
 .pdf-canvas.night { filter: invert(0.88) hue-rotate(180deg); }
 
+/* EPUB (Task 13): el contenedor lo pinta epub.js (iframe columnas). */
+.epub-host {
+  position: absolute; inset: 0;
+  overflow: hidden;
+}
+/* Vuelta de página EPUB: en modo noche, fade simple (en día la transición
+   de columnas la hace epub.js). Las clases se re-aplican por JS. */
+.epub-turn-next, .epub-turn-prev {
+  animation: turn-fade 250ms ease-out both;
+}
+
+/* Panel Aa (ajustes de lectura), compartido por los lectores. */
+.aa-anchor {
+  position: absolute; left: 12px; bottom: 56px; z-index: 6;
+}
+.aa-panel {
+  display: flex; flex-direction: column; gap: 8px; min-width: 190px;
+  padding: 12px; border-radius: var(--radius);
+  background: var(--paper-raised); border: 1px solid var(--line);
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.aa-row { display: flex; align-items: center; gap: 10px; justify-content: center; }
+.aa-value { font-size: .88rem; color: var(--ink-soft); min-width: 44px; text-align: center; }
+.aa-option { text-align: left; }
+
+.reader-bottom.epub .reader-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
 /* Zonas de tap (40 % / 20 % / 40 %) */
 .reader-zone {
   position: absolute; top: 0; bottom: 0; z-index: 3;
