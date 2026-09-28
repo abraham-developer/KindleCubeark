@@ -351,4 +351,35 @@ describe('EpubReader', () => {
       kind: 'note', position: { startCfi: 'epubcfi(/6/8)', endCfi: 'epubcfi(/6/8)' }, color: 'bookmark',
     })
   })
+
+  it('borrar una anotación desde el panel la remueve del rendition sin reabrir el libro', async () => {
+    const noted: Annotation = {
+      id: 'an-note', book_id: 'bk-epub', kind: 'note',
+      position: { startCfi: 'epubcfi(/6/4!/4/2/1:0)', endCfi: 'epubcfi(/6/4!/4/4/1:2)' },
+      quoted_text: 'con nota', note: 'comentario previo', color: 'yellow',
+      created_at: '2026-09-20T10:00:00Z',
+    }
+    const deleteAnnotation = vi.fn(async () => undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listAnnotations: vi.fn(async () => [noted]), deleteAnnotation,
+    })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+    expect(await until(() => renditionFns.annotations.add.mock.calls.length === 1)).toBe(true)
+
+    // abrir el panel desde el topbar y borrar la nota con confirmación inline
+    fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Mis anotaciones' }))
+    const item = (await screen.findByText('con nota')).closest('li') as HTMLElement
+    fireEvent.click(item.querySelector('.annotations-danger') as HTMLElement)
+    fireEvent.click(await screen.findByRole('button', { name: 'Sí, borrar' }))
+
+    expect(await until(() => deleteAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(deleteAnnotation).toHaveBeenCalledWith('an-note')
+    // el lector re-sincroniza: annotations.remove con el CFI de rango, sin reabrir
+    expect(await until(() => renditionFns.annotations.remove.mock.calls.length === 1)).toBe(true)
+    expect(renditionFns.annotations.remove).toHaveBeenCalledWith(
+      'epubcfi(/6/4!/4/2/1:0,/4/4/1:2)', 'highlight',
+    )
+  })
 })

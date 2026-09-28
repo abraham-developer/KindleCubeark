@@ -464,6 +464,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
           <AnnotationsPanel
             bookId={book.id}
             format="pdf"
+            onDeleted={id => setAnnotations(prev => prev.filter(a => a.id !== id))}
             onJump={pos => {
               setNotesOpen(false)
               if (pos && typeof pos.page === 'number') jumpTo(pos.page)

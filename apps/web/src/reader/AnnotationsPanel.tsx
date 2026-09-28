@@ -11,6 +11,8 @@ type Props = {
   /** Formato del libro: elige la clave de orden (página vs CFI). */
   format?: 'pdf' | 'epub'
   onJump: (position: any) => void
+  /** Aviso al lector de que una anotación se borró: re-pinta sin reabrir. */
+  onDeleted?: (id: string) => void
   onClose: () => void
 }
 
@@ -34,7 +36,7 @@ function sortAnnotations(rows: Annotation[], format: 'pdf' | 'epub'): Annotation
   })
 }
 
-export default function AnnotationsPanel({ bookId, format, onJump, onClose }: Props) {
+export default function AnnotationsPanel({ bookId, format, onJump, onDeleted, onClose }: Props) {
   const [items, setItems] = useState<Annotation[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
@@ -56,6 +58,8 @@ export default function AnnotationsPanel({ bookId, format, onJump, onClose }: Pr
     try {
       await api.deleteAnnotation(annotation.id)
       setItems(list => (list ? list.filter(a => a.id !== annotation.id) : list))
+      // el lector (dueño de los resaltados pintados) re-pinta sin reabrir el libro
+      onDeleted?.(annotation.id)
     } catch {
       setError('No se pudo borrar la anotación')
     }

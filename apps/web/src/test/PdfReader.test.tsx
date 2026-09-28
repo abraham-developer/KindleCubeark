@@ -276,4 +276,31 @@ describe('PdfReader', () => {
       kind: 'note', position: { page: 7 }, color: 'bookmark',
     })
   })
+
+  it('borrar una anotación desde el panel quita el overlay del lector sin reabrir el libro', async () => {
+    const highlight: Annotation = {
+      id: 'an1', book_id: 'bk1', kind: 'highlight',
+      position: { page: 7, rects: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.05 }] },
+      quoted_text: 'texto citado', note: '', color: 'pink',
+      created_at: '2026-09-20T10:00:00Z',
+    }
+    const deleteAnnotation = vi.fn(async () => undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listAnnotations: vi.fn(async () => [highlight]),
+      deleteAnnotation,
+    })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    expect(await until(() => document.querySelector('.pdf-highlights .hl.pink') != null)).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Mis anotaciones' }))
+    const item = (await screen.findByText('texto citado')).closest('li') as HTMLElement
+    fireEvent.click(item.querySelector('.annotations-danger') as HTMLElement)
+    fireEvent.click(await screen.findByRole('button', { name: 'Sí, borrar' }))
+
+    expect(await until(() => deleteAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(deleteAnnotation).toHaveBeenCalledWith('an1')
+    // el overlay desaparece del lector sin reabrir el libro
+    expect(await until(() => document.querySelector('.pdf-highlights .hl.pink') == null)).toBe(true)
+  })
 })

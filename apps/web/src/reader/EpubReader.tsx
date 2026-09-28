@@ -551,6 +551,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
           <AnnotationsPanel
             bookId={book.id}
             format="epub"
+            onDeleted={id => setAnnotations(prev => prev.filter(a => a.id !== id))}
             onJump={pos => {
               setNotesOpen(false)
               const target = pos?.startCfi ?? pos?.cfi
