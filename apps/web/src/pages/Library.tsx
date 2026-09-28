@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Book } from '../api'
+import { useAuth } from '../state/AuthContext'
 
 const ACCEPT = '.pdf,.epub'
 
@@ -197,6 +198,7 @@ export async function makePdfCover(file: File): Promise<Blob> {
 
 export default function Library() {
   const navigate = useNavigate()
+  const { signOut } = useAuth()
   const [books, setBooks] = useState<Book[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -269,6 +271,10 @@ export default function Library() {
             <option value="reciente">Reciente</option>
             <option value="titulo">Título</option>
           </select>
+          <button type="button" className="btn" aria-label="Cerrar sesión"
+            onClick={() => { void signOut().then(() => navigate('/login')) }}>
+            Salir
+          </button>
         </div>
       </header>
 
@@ -299,8 +305,22 @@ export default function Library() {
           <div className="grid">
             {visible.map(b => (
               <BookCard key={b.id} book={b}
-                onReset={async book => { await api.resetProgress(book.id); await load() }}
-                onDelete={async book => { await api.deleteBook(book.id); await load() }} />
+                onReset={async book => {
+                  try {
+                    await api.resetProgress(book.id)
+                    await load()
+                  } catch (err) {
+                    setNotice(`No se pudo reiniciar el progreso: ${errorMessage(err)}`)
+                  }
+                }}
+                onDelete={async book => {
+                  try {
+                    await api.deleteBook(book.id)
+                    await load()
+                  } catch (err) {
+                    setNotice(`No se pudo eliminar el libro: ${errorMessage(err)}`)
+                  }
+                }} />
             ))}
           </div>
         )}

@@ -5,6 +5,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { api, type Book } from '../api'
 import { mockApi, stubBrowser } from './mocks'
+import { AuthProvider } from '../state/AuthContext'
 import Library from '../pages/Library'
 
 // pdfjs-dist se stubbea a nivel de módulo: jsdom no necesita un worker real.
@@ -46,12 +47,17 @@ const books: Book[] = [
 ]
 
 function renderLibrary(entry = '/') {
+  // la biblioteca usa AuthContext (logout): provider + espía de me()
+  apiSpies.push(...Object.values(mockApi({ me: vi.fn(async () => null) })))
   return render(
     <MemoryRouter initialEntries={[entry]}>
-      <Routes>
-        <Route path="/" element={<Library />} />
-        <Route path="/reader/:bookId" element={<div>pantalla de lectura</div>} />
-      </Routes>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<Library />} />
+          <Route path="/reader/:bookId" element={<div>pantalla de lectura</div>} />
+          <Route path="/login" element={<div>pantalla de login</div>} />
+        </Routes>
+      </AuthProvider>
     </MemoryRouter>,
   )
 }
@@ -129,6 +135,18 @@ describe('Library — grilla', () => {
   })
 })
 
+describe('Library — sesión', () => {
+  it('«Salir» llama logout y navega a /login', async () => {
+    const logout = vi.fn().mockResolvedValue(undefined)
+    apiSpies.push(...Object.values(mockApi({ listBooks: vi.fn().mockResolvedValue(books), logout })))
+    renderLibrary()
+    await screen.findByTestId('book-card-b1')
+    await userEvent.click(screen.getByRole('button', { name: /cerrar sesión/i }))
+    expect(logout).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('pantalla de login')).toBeInTheDocument()
+  })
+})
+
 describe('Library — menú contextual', () => {
   it('"Desde el principio" llama resetProgress y refresca', async () => {
     const listBooks = vi.fn().mockResolvedValueOnce(books).mockResolvedValueOnce(books)
@@ -155,6 +173,27 @@ describe('Library — menú contextual', () => {
     expect(deleteBook).toHaveBeenCalledWith('b1')
     expect(await screen.findByTestId('book-card-b2')).toBeInTheDocument()
     expect(screen.queryByTestId('book-card-b1')).not.toBeInTheDocument()
+  })
+
+  it('si falla el reinicio o el borrado muestra el aviso y la tarjeta queda', async () => {
+    const listBooks = vi.fn().mockResolvedValue(books)
+    const resetProgress = vi.fn().mockRejectedValue(new Error('Reinicio rechazado'))
+    const deleteBook = vi.fn().mockRejectedValue(new Error('Borrado rechazado'))
+    apiSpies.push(...Object.values(mockApi({ listBooks, resetProgress, deleteBook })))
+    renderLibrary()
+    const card = await screen.findByTestId('book-card-b1')
+    await userEvent.click(within(card).getByRole('button', { name: /opciones/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /desde el principio/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo reiniciar el progreso/i)
+    expect(screen.getByTestId('book-card-b1')).toBeInTheDocument()
+
+    // eliminar: confirmación y aviso de fallo con la tarjeta intacta
+    await userEvent.click(within(card).getByRole('button', { name: /opciones/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /^eliminar$/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /confirmar/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo eliminar el libro/i)
+    expect(screen.getByTestId('book-card-b1')).toBeInTheDocument()
+    expect(listBooks).toHaveBeenCalledTimes(1) // sin refresco: la carga no cambió
   })
 })
 
