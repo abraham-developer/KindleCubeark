@@ -16,6 +16,8 @@ export async function makeTestPdf(pages = 3, title = 'Libro de prueba'): Promise
 interface ZipEntry {
   name: string
   data: Buffer
+  /** tamaño sin comprimir DECLARADO (para simular bombs con payload pequeño) */
+  declaredSize?: number
 }
 
 // Construye un ZIP con entradas STORED (sin comprimir) y en el orden dado.
@@ -26,8 +28,9 @@ function buildStoredZip(entries: ZipEntry[]): Buffer {
   const chunks: Buffer[] = []
   const central: Buffer[] = []
   let offset = 0
-  for (const { name, data } of entries) {
+  for (const { name, data, declaredSize } of entries) {
     const nameBuf = Buffer.from(name, 'utf8')
+    const declared = declaredSize ?? data.length
     const crc = zlib.crc32(data)
     const local = Buffer.alloc(30)
     local.writeUInt32LE(0x04034b50, 0) // firma local file header
@@ -37,8 +40,8 @@ function buildStoredZip(entries: ZipEntry[]): Buffer {
     local.writeUInt16LE(0, 10) // hora
     local.writeUInt16LE(0x21, 12) // fecha válida cualquiera
     local.writeUInt32LE(crc >>> 0, 14)
-    local.writeUInt32LE(data.length, 18) // tamaño comprimido
-    local.writeUInt32LE(data.length, 22) // tamaño sin comprimir
+    local.writeUInt32LE(declared, 18) // tamaño comprimido
+    local.writeUInt32LE(declared, 22) // tamaño sin comprimir
     local.writeUInt16LE(nameBuf.length, 26)
     local.writeUInt16LE(0, 28) // nombre extra: 0
     chunks.push(local, nameBuf, data)
@@ -52,8 +55,8 @@ function buildStoredZip(entries: ZipEntry[]): Buffer {
     centralHeader.writeUInt16LE(0, 12) // hora
     centralHeader.writeUInt16LE(0x21, 14) // fecha
     centralHeader.writeUInt32LE(crc >>> 0, 16)
-    centralHeader.writeUInt32LE(data.length, 20)
-    centralHeader.writeUInt32LE(data.length, 24)
+    centralHeader.writeUInt32LE(declared, 20)
+    centralHeader.writeUInt32LE(declared, 24)
     centralHeader.writeUInt16LE(nameBuf.length, 28)
     centralHeader.writeUInt16LE(0, 30) // extra
     centralHeader.writeUInt16LE(0, 32) // comentario
@@ -76,9 +79,15 @@ function buildStoredZip(entries: ZipEntry[]): Buffer {
   return Buffer.concat([...chunks, centralBuf, end])
 }
 
-function epubEntries(mimetype: string, { title, author, withCover }: { title: string; author: string; withCover: boolean }): ZipEntry[] {
+function epubEntries(
+  mimetype: string,
+  { title, author, withCover, coverFormat }:
+  { title: string; author: string; withCover: boolean; coverFormat: 'jpeg' | 'png' },
+): ZipEntry[] {
+  const coverImage = coverFormat === 'png' ? 'cover.png' : 'cover.jpg'
+  const coverData = coverFormat === 'png' ? png1x1() : jpeg1x1()
   const manifest = withCover
-    ? `<item id="cover-image" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>`
+    ? `<item id="cover-image" href="${coverImage}" media-type="image/${coverFormat}" properties="cover-image"/>`
     : ''
   return [
     { name: 'mimetype', data: Buffer.from(mimetype) },
@@ -87,7 +96,7 @@ function epubEntries(mimetype: string, { title, author, withCover }: { title: st
     { name: 'OEBPS/content.opf', data: Buffer.from(
       `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${title}</dc:title><dc:creator>${author}</dc:creator><dc:identifier id="id">urn:uuid:1234</dc:identifier></metadata><manifest>${manifest}<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="ch1"/></itemref></spine></package>`) },
     { name: 'OEBPS/ch1.xhtml', data: Buffer.from('<html><body><p>Hola capítulo</p></body></html>') },
-    ...(withCover ? [{ name: 'OEBPS/cover.jpg', data: jpeg1x1() }] : []),
+    ...(withCover ? [{ name: `OEBPS/${coverImage}`, data: coverData }] : []),
   ]
 }
 
@@ -96,14 +105,32 @@ function jpeg1x1(): Buffer {
   return Buffer.from('/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPDIzNP/AABEIAAEAAQMBIgACEQEDEQH/xAAfAAABBQEBAQEBAQAAAAAAAAABAgMEBQYHCAkKC//EALURAAEBAwEEBQgFAgECAAMAAwEAAhEDEEEEESExE0FRBgZCInETNDYnKD/xAAVAQEBAAAAAAAAAAAAAAAAAAAAAf/EABQRAQAAAAAAAAAAAAAAAAAAAAD/xAAfEQABBQEAAwUBAAAAAAAAAAABAgMEEQUhEhQxcYH/2gAMAwEAAhEDEQA/AJQA/9k=', 'base64')
 }
 
+// PNG 1x1 mínimo válido (firma + IHDR + IDAT + IEND)
+function png1x1(): Buffer {
+  return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64')
+}
+
 export function makeTestEpub(
-  { title = 'Mi EPUB', author = 'Escritora', withCover = true }:
-  { title?: string; author?: string; withCover?: boolean } = {},
+  { title = 'Mi EPUB', author = 'Escritora', withCover = true, coverFormat = 'jpeg' }:
+  { title?: string; author?: string; withCover?: boolean; coverFormat?: 'jpeg' | 'png' } = {},
 ): Buffer {
-  return buildStoredZip(epubEntries('application/epub+zip', { title, author, withCover }))
+  return buildStoredZip(epubEntries('application/epub+zip', { title, author, withCover, coverFormat }))
 }
 
 // EPUB con el entry mimetype incorrecto (p.ej. 'text/plain') para probar la validación
 export function makeBadMimetypeEpub(): Buffer {
-  return buildStoredZip(epubEntries('text/plain', { title: 'X', author: 'Y', withCover: false }))
+  return buildStoredZip(epubEntries('text/plain', { title: 'X', author: 'Y', withCover: false, coverFormat: 'jpeg' }))
+}
+
+// zip-bomb: mimetype con tamaño SIN comprimir declarado enorme (100 MB) pero
+// payload minúsculo; la validación debe rechazarlo sin intentar descomprimir
+export function makeBombEpub(declaredSize = 100 * 1024 * 1024): Buffer {
+  const entries = epubEntries('application/epub+zip', { title: 'Bomba', author: 'B', withCover: false, coverFormat: 'jpeg' })
+  entries[0] = { ...entries[0], declaredSize }
+  return buildStoredZip(entries)
+}
+
+// PDF con magic bytes válidos pero contenido ilegible para pdf-lib
+export function makeCorruptPdf(): Buffer {
+  return Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.alloc(300, 0), Buffer.from('trailer\nstartxref\n0\n%%EOF')])
 }

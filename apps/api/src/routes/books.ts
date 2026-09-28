@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import path from 'node:path'
 import type { FastifyInstance } from 'fastify'
 import { detectFormat } from '../lib/magic.js'
 import { extractMeta } from '../lib/metadata.js'
@@ -22,14 +23,14 @@ export default async function bookRoutes(app: FastifyInstance) {
     const file = await req.file({ limits: { fileSize: app.config.maxUploadMb * 1024 * 1024 } })
     if (!file) return reply.code(400).send({ message: 'Falta el archivo' })
     const chunks: Buffer[] = []
-    let truncated = false
     await new Promise<void>((resolve) => {
       file.file.on('data', (c: Buffer) => { chunks.push(c) })
-      file.file.on('limit', () => { truncated = true })
       file.file.on('end', resolve)
       file.file.on('error', resolve)
     })
-    if (truncated) return reply.code(400).send({ message: 'El archivo excede el tamaño máximo' })
+    // busboy marca el stream al cortar por limits.fileSize (el evento 'limit'
+    // puede dispararse antes de que este handler lo escuche)
+    if (file.file.truncated) return reply.code(400).send({ message: 'El archivo excede el tamaño máximo' })
     const buf = Buffer.concat(chunks)
 
     // validación solo por magic bytes: si falla, no se escribe nada en disco
@@ -37,9 +38,15 @@ export default async function bookRoutes(app: FastifyInstance) {
     if (!format) return reply.code(400).send({ message: 'El archivo no es un PDF o EPUB válido' })
 
     const id = crypto.randomUUID()
-    const meta = await extractMeta(format, buf)
-    const filePath = await saveBookFile(app.config.dataDir, req.user!.id, id, format, buf)
+    // metadatos corruptos/ilegibles → 400, sin haber escrito nada aún
+    let meta
     try {
+      meta = await extractMeta(format, buf)
+    } catch {
+      return reply.code(400).send({ message: 'El archivo está corrupto o es ilegible' })
+    }
+    try {
+      const filePath = await saveBookFile(app.config.dataDir, req.user!.id, id, format, buf)
       const coverPath = meta.coverJpeg
         ? await saveCover(app.config.dataDir, req.user!.id, id, meta.coverJpeg)
         : null
@@ -50,8 +57,8 @@ export default async function bookRoutes(app: FastifyInstance) {
       )
       return reply.code(201).send(rows[0])
     } catch (e) {
-      // si el INSERT falla, no dejar huérfanos en disco
-      await removeBookFiles(app.config.dataDir, filePath)
+      // si el guardado o el INSERT fallan, no dejar huérfanos en disco
+      await removeBookFiles(app.config.dataDir, path.join(req.user!.id, `${id}.${format}`))
       throw e
     }
   })
