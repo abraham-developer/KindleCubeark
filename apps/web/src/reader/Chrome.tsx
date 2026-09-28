@@ -1,16 +1,23 @@
 // apps/web/src/reader/Chrome.tsx — topbar/bottombar compartidos por los
-// lectores (Tasks 13–14): título + volver + modo noche, y slider de salto,
+// lectores (Tasks 13–14): título + volver + modo noche, marcador de página
+// (cinta), botón de notas (panel) y nota de página, y slider de salto,
 // etiqueta «pág. N de M», porcentaje y ajuste de página/ancho.
 export function TopBar({
   title,
   onBack,
   night,
   onToggleNight,
+  onNotes,
+  onPageNote,
 }: {
   title: string
   onBack: () => void
   night: boolean
   onToggleNight: () => void
+  /** Abre el panel «Mis anotaciones» (ambos lectores). */
+  onNotes?: () => void
+  /** Nueva nota de página (solo PDF, funciona también en escaneados). */
+  onPageNote?: () => void
 }) {
   return (
     <header className="reader-top">
@@ -18,10 +25,33 @@ export function TopBar({
         ‹ Biblioteca
       </button>
       <h1 className="reader-title">{title}</h1>
+      {onPageNote && (
+        <button type="button" className="reader-tool" onClick={onPageNote} aria-label="Nueva nota de página">
+          Nota
+        </button>
+      )}
+      {onNotes && (
+        <button type="button" className="reader-tool" onClick={onNotes} aria-label="Mis anotaciones">
+          Notas
+        </button>
+      )}
       <button type="button" className="reader-tool" onClick={onToggleNight} aria-pressed={night}>
         {night ? 'Modo día' : 'Modo noche'}
       </button>
     </header>
+  )
+}
+
+/** Cinta del marcador: esquina superior derecha, curva hacia adentro al marcar. */
+export function BookmarkButton({ marked, onToggle }: { marked: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`bookmark-ribbon${marked ? ' marked' : ''}`}
+      aria-pressed={marked}
+      aria-label={marked ? 'Quitar marcador' : 'Marcar página'}
+      onClick={onToggle}
+    />
   )
 }
 
@@ -72,10 +102,10 @@ export default function ReaderChrome(props: React.ComponentProps<typeof TopBar> 
   onToggleFit: () => void
   onSliderJump: (page: number) => void
 }) {
-  const { title, onBack, night, onToggleNight, ...bottom } = props
+  const { title, onBack, night, onToggleNight, onNotes, onPageNote, ...bottom } = props
   return (
     <>
-      <TopBar title={title} onBack={onBack} night={night} onToggleNight={onToggleNight} />
+      <TopBar title={title} onBack={onBack} night={night} onToggleNight={onToggleNight} onNotes={onNotes} onPageNote={onPageNote} />
       <BottomBar {...bottom} />
     </>
   )

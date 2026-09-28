@@ -88,6 +88,7 @@ describe('SelectionMenu', () => {
     </>)
     // selección real sobre el párrafo, como haría el lector
     const paragraph = document.getElementById('parrafo') ?? container.querySelector('p')
+    if (!paragraph) throw new Error('no hay párrafo')
     const range = document.createRange()
     range.selectNodeContents(paragraph)
     const selection = document.getSelection()

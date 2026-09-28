@@ -7,7 +7,7 @@ import { render, act, fireEvent, screen } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { getDocument } from 'pdfjs-dist'
-import { api, type Book, type Position } from '../api'
+import { api, type Annotation, type Book, type Position } from '../api'
 import { mockApi, stubBrowser } from './mocks'
 import Reader from '../reader/Reader'
 
@@ -177,5 +177,103 @@ describe('PdfReader', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /modo noche/i }))
     expect(canvas).toHaveClass('night')
+  })
+
+  it('pinta los resaltados guardados de la página actual como overlays', async () => {
+    const highlight: Annotation = {
+      id: 'an1', book_id: 'bk1', kind: 'highlight',
+      position: { page: 7, rects: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.05 }] },
+      quoted_text: 'texto citado', note: '', color: 'pink',
+      created_at: '2026-09-20T10:00:00Z',
+    }
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => [highlight]) })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    const overlay = await until(
+      () => document.querySelector('.pdf-highlights .hl.pink') != null,
+    )
+    expect(overlay).toBe(true)
+    const hl = document.querySelector('.pdf-highlights .hl.pink') as HTMLElement
+    expect(hl.style.left).toBe('10%')
+    expect(hl.style.top).toBe('20%')
+    expect(hl.style.width).toBe('30%')
+    expect(hl.style.height).toBe('5%')
+  })
+
+  it('selección sobre el textLayer → menú → rosa crea el resaltado con rects normalizados', async () => {
+    const createAnnotation = vi.fn(async (_id: string, body: unknown) => ({
+      id: 'an2', book_id: 'bk1', kind: 'highlight', position: { page: 7, rects: [{ x: 0.02, y: 0.03, w: 0.17, h: 0.03 }] },
+      quoted_text: 'un texto seleccionable', note: '', color: 'pink', created_at: '2026-09-27T00:00:00Z',
+    }))
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []), createAnnotation })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    await until(() => document.querySelector('.textLayer') != null)
+
+    // jsdom no resuelve rects: se stubbean selección y rects del canvas
+    const layer = document.querySelector('.textLayer') as HTMLElement
+    const selStub = {
+      isCollapsed: false, rangeCount: 1, anchorNode: layer,
+      toString: () => 'un texto seleccionable',
+      removeAllRanges: vi.fn(),
+      getRangeAt: () => ({
+        getClientRects: () => [{ left: 12, top: 24, width: 100, height: 20, right: 112, bottom: 44 }],
+      }),
+    }
+    const selSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selStub as unknown as Selection)
+    const rectSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800 } as DOMRect)
+
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    fireEvent.mouseUp(stage)
+
+    // el menú de selección aparece con los colores y Nota
+    expect(await until(() => document.querySelector('.selection-menu') != null)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'rosa' }))
+
+    expect(await until(() => createAnnotation.mock.calls.length === 1)).toBe(true)
+    const [bookId, body] = createAnnotation.mock.calls[0]
+    expect(bookId).toBe('bk1')
+    expect(body).toEqual({
+      kind: 'highlight',
+      position: { page: 7, rects: [{ x: 0.02, y: 0.03, w: 100 / 600, h: 20 / 800 }] },
+      quoted_text: 'un texto seleccionable',
+      color: 'pink',
+    })
+    // el resaltado nuevo se pinta al instante
+    expect(await until(() => document.querySelector('.pdf-highlights .hl.pink') != null)).toBe(true)
+
+    selSpy.mockRestore()
+    rectSpy.mockRestore()
+  })
+
+  it('el marcador: cinta marcada según la página y toggle crea/borra annotation bookmark', async () => {
+    const bookmark: Annotation = {
+      id: 'bm1', book_id: 'bk1', kind: 'note', position: { page: 7 },
+      quoted_text: '', note: '', color: 'bookmark', created_at: '2026-09-20T10:00:00Z',
+    }
+    let rows: Annotation[] = [bookmark]
+    const deleteAnnotation = vi.fn(async () => undefined)
+    const createAnnotation = vi.fn(async () => ({ ...bookmark, id: 'bm2', created_at: '2026-09-27T00:00:00Z' }))
+    const listAnnotations = vi.fn(async () => rows)
+    apiSpies.push(...Object.values(mockApi({ listAnnotations, deleteAnnotation, createAnnotation })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+
+    // marcada: cinta curvada (aria-pressed) con el bookmark de la página 7
+    expect(await until(() => screen.queryByRole('button', { name: 'Quitar marcador' }) != null)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar marcador' }))
+    expect(await until(() => deleteAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(deleteAnnotation).toHaveBeenCalledWith('bm1')
+
+    // página sin marcador: el toggle crea la annotation {page} color bookmark
+    rows = []
+    await until(() => listAnnotations.mock.calls.length > 0)
+    // listAnnotations no se re-consulta: el borrado ya actualizó el estado local
+    expect(await until(() => screen.queryByRole('button', { name: 'Marcar página' }) != null)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar página' }))
+    expect(await until(() => createAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(createAnnotation).toHaveBeenCalledWith('bk1', {
+      kind: 'note', position: { page: 7 }, color: 'bookmark',
+    })
   })
 })

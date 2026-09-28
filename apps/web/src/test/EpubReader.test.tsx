@@ -7,7 +7,7 @@ import { render, act, fireEvent, screen, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import ePub from 'epubjs'
-import { api, type Book, type Position } from '../api'
+import { api, type Annotation, type Book, type Position } from '../api'
 import { mockApi, stubBrowser } from './mocks'
 import Reader from '../reader/Reader'
 
@@ -18,7 +18,7 @@ const realSleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolv
 type Spy = ReturnType<typeof vi.spyOn>
 const apiSpies: Spy[] = []
 
-type Handler = (payload?: unknown) => void
+type Handler = (payload?: unknown, ...rest: unknown[]) => void
 
 const handlers = new Map<string, Handler>()
 
@@ -251,5 +251,104 @@ describe('EpubReader', () => {
     })
     expect(await until(() => bottom.textContent?.includes('El río') ?? false)).toBe(true)
     expect(await until(() => bottom.textContent?.includes('62%') ?? false)).toBe(true)
+  })
+
+  it('selección de texto → menú → rosa crea el resaltado y lo pinta con annotations.add', async () => {
+    const createAnnotation = vi.fn(async () => ({
+      id: 'an1', book_id: 'bk-epub', kind: 'highlight',
+      position: { startCfi: 'epubcfi(/6/4!/4/2/1:0)', endCfi: 'epubcfi(/6/4!/4/4/1:2)' },
+      quoted_text: 'párrafo elegido', note: '', color: 'pink', created_at: '2026-09-27T00:00:00Z',
+    }))
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []), createAnnotation })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+
+    // epub.js emite 'selected' con el CFI de rango y los contents del iframe
+    const fakeContents = {
+      window: {
+        getSelection: () => ({
+          isCollapsed: false, rangeCount: 1,
+          toString: () => 'párrafo elegido',
+          removeAllRanges: vi.fn(),
+          getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 30, top: 40, width: 200, height: 22 }) }),
+        }),
+      },
+    }
+    act(() => {
+      handlers.get('selected')!('epubcfi(/6/4!/4/2/1:0,/4/4/1:2)', fakeContents)
+    })
+    expect(await until(() => document.querySelector('.selection-menu') != null)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'rosa' }))
+
+    expect(await until(() => createAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(createAnnotation).toHaveBeenCalledWith('bk-epub', {
+      kind: 'highlight',
+      position: { startCfi: 'epubcfi(/6/4!/4/2/1:0)', endCfi: 'epubcfi(/6/4!/4/4/1:2)' },
+      quoted_text: 'párrafo elegido',
+      color: 'pink',
+    })
+    // el resaltado se pinta con el CFI de rango re-armado y el color
+    expect(await until(() => renditionFns.annotations.add.mock.calls.length === 1)).toBe(true)
+    const [type, cfiRange, data, cb, className, styles] = renditionFns.annotations.add.mock.calls[0]
+    expect(type).toBe('highlight')
+    expect(cfiRange).toBe('epubcfi(/6/4!/4/2/1:0,/4/4/1:2)')
+    expect(data.quoted_text).toBe('párrafo elegido')
+    expect(className).toBe('kc-annotation')
+    expect(styles['mix-blend-mode']).toBe('multiply')
+    expect(typeof cb).toBe('function')
+  })
+
+  it('los resaltados guardados se pintan al abrir; una nota anclada se abre con el editor', async () => {
+    const noted: Annotation = {
+      id: 'an-note', book_id: 'bk-epub', kind: 'note',
+      position: { startCfi: 'epubcfi(/6/4!/4/2/1:0)', endCfi: 'epubcfi(/6/4!/4/4/1:2)' },
+      quoted_text: 'con nota', note: 'comentario previo', color: 'yellow',
+      created_at: '2026-09-20T10:00:00Z',
+    }
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => [noted]) })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+    expect(await until(() => renditionFns.annotations.add.mock.calls.length === 1)).toBe(true)
+
+    // click sobre el resaltado anclado con nota → editor de nota
+    const [, , , cb] = renditionFns.annotations.add.mock.calls[0]
+    act(() => { (cb as () => void)() })
+    expect(await until(() => document.querySelector('.note-editor') != null)).toBe(true)
+    expect((document.querySelector('.note-editor textarea') as HTMLTextAreaElement).value).toBe('comentario previo')
+  })
+
+  it('el marcador ancla al CFI actual y marca la cinta en la misma sección', async () => {
+    const bookmark: Annotation = {
+      id: 'bm1', book_id: 'bk-epub', kind: 'note',
+      position: { startCfi: 'epubcfi(/6/8!/4/2)', endCfi: 'epubcfi(/6/8!/4/2)' },
+      quoted_text: '', note: '', color: 'bookmark', created_at: '2026-09-20T10:00:00Z',
+    }
+    const deleteAnnotation = vi.fn(async () => undefined)
+    const createAnnotation = vi.fn(async () => ({ ...bookmark, id: 'bm2', created_at: '2026-09-27T00:00:00Z' }))
+    apiSpies.push(...Object.values(mockApi({
+      listAnnotations: vi.fn(async () => [bookmark]), deleteAnnotation, createAnnotation,
+    })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+
+    // relocated a /6/8: misma sección del bookmark existente → cinta marcada
+    act(() => {
+      handlers.get('relocated')!({
+        start: { cfi: 'epubcfi(/6/8)', percentage: 0.8, index: 4 },
+        end: { cfi: 'epubcfi(/6/9)', percentage: 0.85, index: 5 },
+      })
+    })
+    expect(await until(() => screen.queryByRole('button', { name: 'Quitar marcador' }) != null)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar marcador' }))
+    expect(await until(() => deleteAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(deleteAnnotation).toHaveBeenCalledWith('bm1')
+
+    // sin marcador: crea la annotation {startCfi, endCfi} con el CFI actual como ambos
+    await until(() => screen.queryByRole('button', { name: 'Marcar página' }) != null)
+    fireEvent.click(screen.getByRole('button', { name: 'Marcar página' }))
+    expect(await until(() => createAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(createAnnotation).toHaveBeenCalledWith('bk-epub', {
+      kind: 'note', position: { startCfi: 'epubcfi(/6/8)', endCfi: 'epubcfi(/6/8)' }, color: 'bookmark',
+    })
   })
 })

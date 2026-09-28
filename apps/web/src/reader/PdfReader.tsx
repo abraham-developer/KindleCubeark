@@ -1,17 +1,26 @@
 // apps/web/src/reader/PdfReader.tsx — lector PDF (pdf.js): render de página,
 // volteo con animación, zonas de tap, teclado, swipe, ajuste página/ancho,
-// modo noche (filtro CSS) y progreso sincronizado (Task 12).
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { getDocument, GlobalWorkerOptions, type PDFDocumentProxy } from 'pdfjs-dist'
+// modo noche (filtro CSS) y progreso sincronizado (Task 12). Task 14 agrega
+// textLayer (selección de texto), menú de anotación, resaltados con overlays
+// mix-blend-mode, notas de página y marcador (cinta).
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { type Book, type Position } from '../api'
+import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { api, type Annotation, type Book, type Position } from '../api'
 import { useProgressSync } from '../lib/progressSync'
 import PageTurn from './PageTurn'
-import { TopBar, BottomBar } from './Chrome'
+import { TopBar, BottomBar, BookmarkButton } from './Chrome'
+import SelectionMenu, { type HighlightColor } from './SelectionMenu'
+import NoteEditor from './NoteEditor'
+import AnnotationsPanel from './AnnotationsPanel'
 
+const { getDocument, GlobalWorkerOptions } = pdfjs
 GlobalWorkerOptions.workerSrc = workerUrl
 
 type ReaderProgress = { position: Position; percent: string | number } | null
+
+type Rect = { x: number; y: number; w: number; h: number }
 
 type Props = {
   book: Book
@@ -19,9 +28,18 @@ type Props = {
   onBack: () => void
 }
 
+type SelectionInfo = { page: number; rects: Rect[]; quoted: string }
+type NoteDraft =
+  | { kind: 'new'; position: { page: number }; quoted: string }
+  | { kind: 'edit'; annotation: Annotation }
+
 function errorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   return msg || 'Error inesperado'
+}
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value))
 }
 
 /** Página inicial del progreso guardado, antes del primer render (sin flash a la 1). */
@@ -41,6 +59,15 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // ── Anotaciones (Task 14) ────────────────────────────────────────────────
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const selectionRef = useRef<SelectionInfo | null>(null)
+  const textLayerRef = useRef<HTMLDivElement | null>(null)
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -98,8 +125,31 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         if (cancelled || token !== renderToken.current || !canvas || !ctx) return
         canvas.width = Math.round(viewport.width)
         canvas.height = Math.round(viewport.height)
+        // tamaño CSS explícito: el wrapper (.pdf-page) queda exactamente sobre el
+        // canvas y las capas (texto/resaltados) se posicionan en porcentajes
+        canvas.style.width = `${Math.round(viewport.width)}px`
+        canvas.style.height = `${Math.round(viewport.height)}px`
         await pdfPage.render({ canvasContext: ctx, viewport }).promise
-        if (!cancelled && token === renderToken.current) pdfPage.cleanup?.()
+        if (cancelled || token !== renderToken.current) return
+        // TextLayer (pdf.js) sobre el canvas: hace seleccionable el texto. Es
+        // accesorio: si falla (o en tests, donde pdfjs está mockeado sin
+        // TextLayer), la página se muestra igual.
+        const layer = textLayerRef.current
+        if (layer) {
+          layer.textContent = ''
+          try {
+            const TextLayerCtor = (pdfjs as unknown as {
+              TextLayer?: new (options: { textContentSource: unknown; container: HTMLElement; viewport: unknown }) => { render(): Promise<void> }
+            }).TextLayer
+            if (TextLayerCtor) {
+              layer.style.setProperty('--scale-factor', String(viewport.scale))
+              const content = await pdfPage.getTextContent()
+              if (cancelled || token !== renderToken.current) return
+              await new TextLayerCtor({ textContentSource: content, container: layer, viewport }).render()
+            }
+          } catch { /* el texto es seleccionable sólo si el text layer funciona */ }
+        }
+        pdfPage.cleanup?.()
       } catch (err) {
         if (!cancelled) setLoadError(`No se pudo mostrar la página: ${errorMessage(err)}`)
       }
@@ -107,12 +157,104 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     return () => { cancelled = true }
   }, [page, fit, size, numPages])
 
-  // ── Progreso: guardo cada vuelta de página (la inicial no repite el guardado) ──
+  // ── Anotaciones del libro (una sola descarga; el POST/borrado actualiza) ──
+  useEffect(() => {
+    let alive = true
+    api.listAnnotations(book.id)
+      .then(rows => { if (alive) setAnnotations(rows) })
+      .catch(() => { /* sin anotaciones no se bloquea la lectura */ })
+    return () => { alive = false }
+  }, [book.id])
+
+  const pageAnnotations = useMemo(() => annotations.filter(a =>
+    a.position && typeof a.position === 'object' &&
+    typeof (a.position as { page?: unknown }).page === 'number' &&
+    (a.position as { page: number }).page === page), [annotations, page])
+
+  const bookmarked = annotations.some(a =>
+    a.color === 'bookmark' && typeof a.position?.page === 'number' && a.position.page === page)
+
+  // Progreso: guardo cada vuelta de página (la inicial no repite el guardado)
   useEffect(() => {
     if (!numPages || page === lastSaved.current) return
     lastSaved.current = page
     sync.save({ page }, (page / numPages) * 100)
   }, [page, numPages, sync])
+
+  // Un cambio de página invalida el menú/editor y la selección pendiente
+  useEffect(() => {
+    setMenu(null)
+    setNoteDraft(null)
+    selectionRef.current = null
+    window.getSelection()?.removeAllRanges()
+  }, [page])
+
+  const addHighlight = async (color: HighlightColor) => {
+    const sel = selectionRef.current
+    closeSelectionMenu()
+    if (!sel) return
+    try {
+      const created = await api.createAnnotation(book.id, {
+        kind: 'highlight',
+        position: { page: sel.page, rects: sel.rects },
+        quoted_text: sel.quoted,
+        color,
+      })
+      setAnnotations(prev => [...prev, created])
+      setActionError(null)
+    } catch {
+      setActionError('No se pudo guardar el resaltado')
+    }
+  }
+
+  const closeSelectionMenu = useCallback(() => {
+    setMenu(null)
+    selectionRef.current = null
+    window.getSelection()?.removeAllRanges()
+  }, [])
+
+  const saveNote = async (text: string) => {
+    const draft = noteDraft
+    setNoteDraft(null)
+    if (!draft) return
+    try {
+      if (draft.kind === 'edit') {
+        // sin PATCH en la API: editar una nota la re-crea con la misma posición
+        const old = draft.annotation
+        await api.deleteAnnotation(old.id)
+        const created = await api.createAnnotation(book.id, {
+          kind: old.kind, position: old.position, quoted_text: old.quoted_text, note: text, color: old.color,
+        })
+        setAnnotations(prev => [...prev.filter(a => a.id !== old.id), created])
+      } else {
+        // nota de página (o sobre una selección): position {page}, sin rects
+        const created = await api.createAnnotation(book.id, {
+          kind: 'note', position: draft.position, quoted_text: draft.quoted, note: text, color: 'yellow',
+        })
+        setAnnotations(prev => [...prev, created])
+      }
+      setActionError(null)
+    } catch {
+      setActionError('No se pudo guardar la nota')
+    }
+  }
+
+  const toggleBookmark = async () => {
+    const existing = annotations.find(a =>
+      a.color === 'bookmark' && typeof a.position?.page === 'number' && a.position.page === page)
+    try {
+      if (existing) {
+        await api.deleteAnnotation(existing.id)
+        setAnnotations(prev => prev.filter(a => a.id !== existing.id))
+      } else {
+        const created = await api.createAnnotation(book.id, { kind: 'note', position: { page }, color: 'bookmark' })
+        setAnnotations(prev => [...prev, created])
+      }
+      setActionError(null)
+    } catch {
+      setActionError('No se pudo guardar el marcador')
+    }
+  }
 
   // ── Vuelta de página ──────────────────────────────────────────────────
   const turnNext = useCallback(() => {
@@ -175,6 +317,48 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     return () => { ro?.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
 
+  // ── Selección de texto sobre el textLayer (mouseup con puntero fino) ──
+  // Con puntero fino (mouse) las zonas de tap dejan de capturar los eventos
+  // (CSS @media pointer:fine): este handler hace de zona de tap y de menú.
+  const onStageMouseUp = (e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    const target = e.target as HTMLElement | null
+    // controles propios (cinta, menú, editor, panel): su click no voltea
+    if (target?.closest?.('button, .selection-menu, .note-editor, .annotations-panel')) return
+    const sel = window.getSelection()
+    const layer = textLayerRef.current
+    if (sel && !sel.isCollapsed && sel.rangeCount > 0 && layer && sel.anchorNode &&
+        layer.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0)
+      const canvasRect = canvasRef.current?.getBoundingClientRect()
+      if (!canvasRect || !canvasRect.width || !canvasRect.height) return
+      const rects: Rect[] = Array.from(range.getClientRects())
+        .filter(r => r.width > 1 && r.height > 1)
+        .map(r => ({
+          x: clampUnit((r.left - canvasRect.left) / canvasRect.width),
+          y: clampUnit((r.top - canvasRect.top) / canvasRect.height),
+          w: clampUnit(r.width / canvasRect.width),
+          h: clampUnit(r.height / canvasRect.height),
+        }))
+      if (!rects.length) return
+      selectionRef.current = { page, rects, quoted: sel.toString() }
+      const boxes = range.getClientRects()
+      const last = boxes[boxes.length - 1]
+      setMenu({ x: last.right, y: Math.max(8, last.top - 46) })
+      return
+    }
+    // tap simple sobre el texto → mismas zonas que los botones (40/20/40)
+    if (target && layer && (target === layer || layer.contains(target))) {
+      const stage = stageRef.current
+      if (!stage) return
+      const rect = stage.getBoundingClientRect()
+      const xr = rect.width ? (e.clientX - rect.left) / rect.width : 0.5
+      if (xr < 0.4) turnPrev()
+      else if (xr > 0.6) turnNext()
+      else setChromeVisible(v => !v)
+    }
+  }
+
   // ── Swipe horizontal con inercia ligera (flick más corto que arrastre) ──
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.changedTouches[0]
@@ -207,16 +391,51 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   return (
     <div className="reader" data-night={night || undefined}>
       {chromeVisible && (
-        <TopBar title={book.title} onBack={onBack} night={night} onToggleNight={() => setNight(n => !n)} />
+        <TopBar
+          title={book.title}
+          onBack={onBack}
+          night={night}
+          onToggleNight={() => setNight(n => !n)}
+          onNotes={() => setNotesOpen(v => !v)}
+          onPageNote={() => setNoteDraft({ kind: 'new', position: { page }, quoted: '' })}
+        />
       )}
 
-      <div className="reader-stage" ref={stageRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="reader-stage" ref={stageRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+        onMouseUp={onStageMouseUp}>
         <PageTurn key={page} direction={direction} night={night}>
-          <canvas ref={canvasRef} className={`pdf-canvas ${night ? 'night' : ''}`} aria-hidden="true" />
+          <div className="pdf-page">
+            <canvas ref={canvasRef} className={`pdf-canvas ${night ? 'night' : ''}`} aria-hidden="true" />
+            {/* textLayer de pdf.js: texto seleccionable sobre la página */}
+            <div ref={textLayerRef} className="textLayer" aria-hidden="true" />
+            {/* resaltados guardados, en coords normalizadas 0–1 de la página */}
+            <div className="pdf-highlights">
+              {pageAnnotations.filter(a => Array.isArray(a.position?.rects)).flatMap(a =>
+                (a.position.rects as Rect[]).map((rect, i) => (
+                  <div
+                    key={`${a.id}-${i}`}
+                    className={`hl ${a.color}`}
+                    data-annotation-id={a.id}
+                    title={a.note || undefined}
+                    style={{
+                      left: `${rect.x * 100}%`,
+                      top: `${rect.y * 100}%`,
+                      width: `${rect.w * 100}%`,
+                      height: `${rect.h * 100}%`,
+                    }}
+                  />
+                )),
+              )}
+            </div>
+          </div>
         </PageTurn>
 
         {loading && !loadError && <div className="reader-loading">Cargando…</div>}
         {loadError && <p role="alert" className="lib-alert reader-error">{loadError}</p>}
+        {actionError && <p role="alert" className="lib-alert reader-error">{actionError}</p>}
+
+        {/* Marcador: cinta en la esquina, visible también en modo inmersivo */}
+        <BookmarkButton marked={bookmarked} onToggle={() => void toggleBookmark()} />
 
         {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
         <button type="button" className="reader-zone left" aria-label="Página anterior"
@@ -238,6 +457,46 @@ export default function PdfReader({ book, progress, onBack }: Props) {
           onToggleFit={() => setFit(f => (f === 'page' ? 'width' : 'page'))}
           onSliderJump={jumpTo}
         />
+      )}
+
+      {notesOpen && (
+        <div className="notes-anchor">
+          <AnnotationsPanel
+            bookId={book.id}
+            format="pdf"
+            onJump={pos => {
+              setNotesOpen(false)
+              if (pos && typeof pos.page === 'number') jumpTo(pos.page)
+            }}
+            onClose={() => setNotesOpen(false)}
+          />
+        </div>
+      )}
+
+      {menu && selectionRef.current && (
+        <SelectionMenu
+          x={menu.x}
+          y={menu.y}
+          onSelect={color => void addHighlight(color)}
+          onNote={() => {
+            const sel = selectionRef.current
+            if (sel) setNoteDraft({ kind: 'new', position: { page: sel.page }, quoted: sel.quoted })
+            setMenu(null)
+          }}
+          onClose={closeSelectionMenu}
+        />
+      )}
+
+      {noteDraft && (
+        <div className="note-anchor">
+          <NoteEditor
+            heading={noteDraft.kind === 'edit' ? 'Editar nota' : 'Nueva nota'}
+            initialNote={noteDraft.kind === 'edit' ? noteDraft.annotation.note : ''}
+            quotedText={noteDraft.kind === 'edit' ? noteDraft.annotation.quoted_text : noteDraft.quoted}
+            onSave={text => void saveNote(text)}
+            onCancel={() => setNoteDraft(null)}
+          />
+        </div>
       )}
     </div>
   )

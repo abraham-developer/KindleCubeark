@@ -196,6 +196,35 @@ button { font-family: var(--serif); }
 /* Modo noche: inversión real del PDF vía filtro CSS, sin tocar los píxeles. */
 .pdf-canvas.night { filter: invert(0.88) hue-rotate(180deg); }
 
+/* Página PDF: canvas + capas (texto seleccionable y resaltados) encima. */
+.pdf-page { position: relative; display: flex; }
+.pdf-highlights, .textLayer { position: absolute; inset: 0; overflow: hidden; }
+/* TextLayer de pdf.js: los spans traen left/top inline en función de
+   --scale-factor (la fija el render del text layer). */
+.textLayer {
+  pointer-events: none; line-height: 1; user-select: text;
+  text-align: initial; transform-origin: 0 0; forced-color-adjust: none;
+}
+.textLayer span {
+  position: absolute; white-space: pre; cursor: text;
+  transform-origin: 0 0; color: transparent; pointer-events: auto;
+}
+
+/* Resaltados: mezcla multiplicada sobre el papel (papel) / pantalla (noche). */
+.pdf-highlights { pointer-events: none; }
+.pdf-highlights .hl { position: absolute; mix-blend-mode: multiply; border-radius: 2px; }
+.reader[data-night] .pdf-highlights .hl { mix-blend-mode: screen; }
+.hl.yellow, .dot.yellow { background: rgba(255, 202, 44, .45); }
+.hl.gray, .dot.gray { background: rgba(120, 120, 120, .38); }
+.hl.pink, .dot.pink { background: rgba(255, 128, 171, .45); }
+.hl.blue, .dot.blue { background: rgba(120, 180, 255, .45); }
+
+/* Con puntero fino (mouse) las zonas de tap no capturan: la selección de
+   texto necesita el mousedown sobre el texto; el lector maneja el tap. */
+@media (pointer: fine) {
+  .reader-zone { pointer-events: none; }
+}
+
 /* EPUB (Task 13): el contenedor lo pinta epub.js (iframe columnas). */
 .epub-host {
   position: absolute; inset: 0;
@@ -259,3 +288,83 @@ button { font-family: var(--serif); }
 .reader-slider { flex: 1; min-width: 80px; accent-color: var(--accent); }
 .reader-label { font-size: .8rem; color: var(--ink-soft); white-space: nowrap; }
 .reader-pct { font-size: .8rem; color: var(--ink-soft); min-width: 38px; text-align: right; }
+
+/* Marcador: cinta colgando de la esquina superior derecha; marcada, curva
+   hacia adentro con un transform (spec §8). */
+.bookmark-ribbon {
+  position: absolute; top: 0; right: 18px; z-index: 5;
+  width: 26px; height: 38px; padding: 0; border: 0; cursor: pointer;
+  background: var(--accent);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%);
+  box-shadow: 0 1px 4px var(--shadow);
+  transform: translateY(-58%) rotate(0deg);
+  transition: transform .2s ease, clip-path .2s ease;
+}
+.bookmark-ribbon.marked { transform: translateY(-4px) rotate(-3deg); }
+.bookmark-ribbon:focus-visible { outline: 1px dashed var(--paper); outline-offset: -4px; }
+
+/* Menú flotante de selección (Task 14) */
+.selection-menu {
+  position: fixed; z-index: 8; display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: var(--radius);
+  background: var(--paper-raised); border: 1px solid var(--line);
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.selection-menu button {
+  display: flex; align-items: center; padding: 4px; cursor: pointer;
+  border: 0; background: none; border-radius: 6px;
+}
+.selection-menu button:hover { background: var(--paper); }
+.selection-menu .dot { width: 18px; height: 18px; border-radius: 50%; display: block; }
+.selection-sep { width: 1px; height: 20px; background: var(--line); }
+.selection-note {
+  font-family: var(--serif); font-size: .9rem; color: var(--ink); padding: 4px 8px;
+}
+
+/* Punto de color compartido (menú, panel) */
+.dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex: none; }
+
+/* Editor de nota (popover) */
+.note-anchor, .notes-anchor { position: absolute; left: 12px; bottom: 56px; z-index: 7; }
+.note-editor {
+  display: flex; flex-direction: column; gap: 8px; width: min(320px, calc(100vw - 24px));
+  padding: 12px; border-radius: var(--radius);
+  background: var(--paper-raised); border: 1px solid var(--line);
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.note-heading { margin: 0; font-size: .85rem; color: var(--ink-soft); }
+.note-quoted { margin: 0; font-size: .85rem; font-style: italic; color: var(--ink-soft);
+  max-height: 72px; overflow: auto; }
+.note-editor textarea {
+  font-family: var(--serif); font-size: .95rem; color: var(--ink); resize: vertical;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+}
+.note-editor textarea:focus { outline: none; border-color: var(--accent); }
+.note-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.note-actions .note-save { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+
+/* Panel «Mis anotaciones» (Task 14) */
+.annotations-panel {
+  display: flex; flex-direction: column; gap: 10px;
+  width: min(320px, calc(100vw - 24px)); max-height: min(60vh, 480px);
+  padding: 12px; border-radius: var(--radius);
+  background: var(--paper-raised); border: 1px solid var(--line);
+  box-shadow: 0 4px 14px var(--shadow);
+  overflow: auto;
+}
+.annotations-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.annotations-head h2 { margin: 0; font-size: .95rem; font-weight: 400; }
+.annotations-panel ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+.annotation-item {
+  display: flex; flex-direction: column; gap: 4px; align-items: flex-start;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--paper);
+}
+.annotation-item .dot { width: 14px; height: 14px; }
+.annotation-quote { margin: 0; font-size: .88rem; line-height: 1.4; }
+.annotation-note { margin: 0; font-size: .8rem; color: var(--ink-soft); font-style: italic; }
+.annotation-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.annotation-confirm { font-size: .78rem; color: var(--ink-soft); }
+.annotations-danger { color: var(--danger); }
+.annotations-empty, .annotations-error { margin: 0; font-size: .85rem; color: var(--ink-soft); }
+.annotations-error { color: var(--danger); }

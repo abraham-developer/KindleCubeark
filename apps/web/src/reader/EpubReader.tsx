@@ -1,13 +1,19 @@
 // apps/web/src/reader/EpubReader.tsx — lector EPUB sobre epub.js: retomar por
 // CFI guardado (sin flash a la página 1), guardado del progreso al «relocated»,
 // navegación con zonas de tap / teclado / swipe, panel Aa (tamaño, interlineado,
-// tipografía, día/noche) y slider por porcentaje (Task 13).
-import { useCallback, useEffect, useRef, useState } from 'react'
+// tipografía, día/noche) y slider por porcentaje (Task 13). Task 14 agrega
+// selección → menú de anotación, resaltados con rendition.annotations, notas
+// ancladas al resaltado (click → editor) y marcador (cinta).
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ePub, { type Book as EpubBook, type Location, type NavItem, type Rendition } from 'epubjs'
-import { type Book, type Position } from '../api'
+import { api, type Annotation, type Book, type Position } from '../api'
 import { useProgressSync } from '../lib/progressSync'
-import { TopBar } from './Chrome'
+import { splitCfiRange, joinCfiRange, cfiSection } from '../lib/cfiRange'
+import { TopBar, BookmarkButton } from './Chrome'
 import AaPanel, { fontFamilyStack, loadSettings, type ReaderSettings } from './AaPanel'
+import SelectionMenu, { HIGHLIGHT_FILL, type HighlightColor } from './SelectionMenu'
+import NoteEditor from './NoteEditor'
+import AnnotationsPanel from './AnnotationsPanel'
 
 type ReaderProgress = { position: Position; percent: string | number } | null
 
@@ -16,6 +22,11 @@ type Props = {
   progress: ReaderProgress
   onBack: () => void
 }
+
+type SelectionInfo = { startCfi: string; endCfi: string; text: string; contents: unknown }
+type NoteDraft =
+  | { kind: 'new'; selection: SelectionInfo }
+  | { kind: 'edit'; annotation: Annotation }
 
 function errorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
@@ -26,6 +37,31 @@ function errorMessage(err: unknown): string {
 function savedCfi(progress: ReaderProgress): string | undefined {
   const position = progress?.position
   return position && 'cfi' in position ? position.cfi : undefined
+}
+
+/** Rango CFI {start,end} de una anotación, si es anclable como resaltado. */
+function annotationCfiRange(annotation: Annotation): { start: string; end: string } | null {
+  const position = annotation.position as { startCfi?: unknown; endCfi?: unknown } | undefined
+  if (position && typeof position.startCfi === 'string' && typeof position.endCfi === 'string') {
+    return { start: position.startCfi, end: position.endCfi }
+  }
+  return null
+}
+
+/** Texto y rectángulo de la selección dentro de los contents de epub.js. */
+function contentsSelection(contents: unknown): { text: string; rect: DOMRect | null } {
+  try {
+    const win = (contents as { window?: Window }).window
+    const selection = win?.getSelection?.()
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      return { text: '', rect: null }
+    }
+    const range = selection.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
+    return { text: selection.toString(), rect: rect && rect.width > 0 ? rect : null }
+  } catch {
+    return { text: '', rect: null }
+  }
 }
 
 /** Aplica los ajustes de lectura al rendition (tamaño, tema, interlineado, fuente). */
@@ -53,6 +89,18 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [percent, setPercent] = useState(() => Number(progress?.percent ?? 0))
   const [chapter, setChapter] = useState<string | null>(null)
+
+  // ── Anotaciones (Task 14) ────────────────────────────────────────────────
+  const [annotations, setAnnotations] = useState<Annotation[]>([])
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null)
+  const [notesOpen, setNotesOpen] = useState(false)
+  const selectionRef = useRef<SelectionInfo | null>(null)
+  const currentCfiRef = useRef<string | null>(null)
+  const [currentCfi, setCurrentCfi] = useState<string | null>(null)
+  // id → rango pintado en el rendition (y modo día/noche del estilo inline)
+  const renderedRef = useRef<Map<string, { mode: string; cfiRange: string }>>(new Map())
 
   const hostRef = useRef<HTMLDivElement | null>(null)
   const bookRef = useRef<EpubBook | null>(null)
@@ -85,12 +133,79 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     // pinta la barra lo manda el usuario, no el relocated del salto
     if (Date.now() - sliderMovedAt.current > 500) setPercent(pct)
     setChapter(tocTitle(bookRef.current?.navigation as { toc?: NavItem[] } | undefined, start.href))
+    // CFI actual: el marcador y la verificación de «página marcada» lo usan
+    currentCfiRef.current = start.cfi
+    setCurrentCfi(start.cfi)
+    // la selección queda desfasada al cambiar de página
+    setMenu(null)
+    selectionRef.current = null
     if (firstRelocatedRef.current) {
       firstRelocatedRef.current = false // eco del resume: no re-guarda
       return
     }
     sync.save({ cfi: start.cfi, percent: pct, section: start.index }, pct)
   }, [sync])
+
+  // ── Anotaciones del libro (una sola descarga; el POST/borrado actualiza) ──
+  useEffect(() => {
+    let alive = true
+    api.listAnnotations(book.id)
+      .then(rows => { if (alive) setAnnotations(rows) })
+      .catch(() => { /* sin anotaciones no se bloquea la lectura */ })
+    return () => { alive = false }
+  }, [book.id])
+
+  const bookmarks = useMemo(() => annotations.filter(a => a.color === 'bookmark'), [annotations])
+  const bookmarked = useMemo(() => {
+    const here = cfiSection(currentCfi)
+    if (here === null) return false
+    // tolerancia: basta que el marcador caiga en la misma sección
+    return bookmarks.some(b => cfiSection((b.position as { startCfi?: unknown }).startCfi) === here)
+  }, [bookmarks, currentCfi])
+
+  /** Pinta/limpia los resaltados en el rendition según las anotaciones vigentes. */
+  const syncAnnotations = useCallback((rendition: Rendition, isNight: boolean) => {
+    const mode = isNight ? 'night' : 'day'
+    const wanted = new Map<string, { annotation: Annotation; cfiRange: string }>()
+    for (const annotation of annotations) {
+      if (annotation.color === 'bookmark') continue
+      const range = annotationCfiRange(annotation)
+      if (!range) continue // notas de página sin rango no se pintan
+      wanted.set(annotation.id, { annotation, cfiRange: joinCfiRange(range.start, range.end) })
+    }
+    for (const [id, rendered] of Array.from(renderedRef.current)) {
+      const wantedEntry = wanted.get(id)
+      if (wantedEntry && wantedEntry.cfiRange === rendered.cfiRange && rendered.mode === mode) continue
+      try { rendition.annotations.remove(rendered.cfiRange, 'highlight') } catch { /* capítulo no montado */ }
+      renderedRef.current.delete(id)
+    }
+    for (const [id, entry] of wanted) {
+      if (renderedRef.current.has(id)) continue
+      const { annotation, cfiRange } = entry
+      try {
+        rendition.annotations.add(
+          'highlight',
+          cfiRange,
+          annotation,
+          // tocar un resaltado anclado con nota abre el editor
+          () => { if (annotation.note || annotation.kind === 'note') setNoteDraft({ kind: 'edit', annotation }) },
+          'kc-annotation',
+          {
+            fill: HIGHLIGHT_FILL[(annotation.color as HighlightColor)] ?? HIGHLIGHT_FILL.yellow,
+            'mix-blend-mode': isNight ? 'screen' : 'multiply',
+          },
+        )
+        renderedRef.current.set(id, { mode, cfiRange })
+      } catch { /* rango no renderizable en la sección actual */ }
+    }
+  }, [annotations])
+
+  // tras cada cambio de anotaciones o de modo, re-sincroniza los resaltados
+  useEffect(() => {
+    const rendition = renditionRef.current
+    if (!rendition) return
+    syncAnnotations(rendition, night)
+  }, [annotations, night, syncAnnotations])
 
   // ── Carga del libro: renderTo + retomar por CFI antes de mostrar ────────
   useEffect(() => {
@@ -116,6 +231,38 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     applySettings(rendition, settingsRef.current)
     rendition.on('relocated', onRelocated)
 
+    // Selección de texto: epub.js la detecta con debounce y emite el CFI de rango
+    rendition.on('selected', (cfiRange: unknown, contents: unknown) => {
+      const parts = splitCfiRange(String(cfiRange ?? ''))
+      if (!parts) return
+      const { text, rect } = contentsSelection(contents)
+      selectionRef.current = { startCfi: parts.startCfi, endCfi: parts.endCfi, text, contents }
+      const hostRect = host.getBoundingClientRect()
+      const x = hostRect.left + (rect ? rect.left + rect.width / 2 : hostRect.width / 2)
+      const y = hostRect.top + Math.max(8, (rect ? rect.top : hostRect.height / 4) - 52)
+      setMenu({ x, y })
+    })
+
+    // Con puntero fino las zonas de tap no capturan (CSS): el tap sobre el
+    // contenido llega por los eventos que epub.js re-emite del iframe.
+    rendition.on('mouseup', (ev: MouseEvent, contents: unknown) => {
+      if (!ev || ev.button !== 0) return
+      const selection = contentsSelection(contents)
+      if (selection.text) return // arrastre con selección: abrirá el menú
+      const hostRect = host.getBoundingClientRect()
+      const xr = hostRect.width ? ev.clientX / hostRect.width : 0.5
+      if (xr < 0.4) turnPrev()
+      else if (xr > 0.6) turnNext()
+      else setChromeVisible(v => !v)
+    })
+    // los touch re-enviados alimentan el mismo swipe que el stage
+    rendition.on('touchstart', (ev: TouchEvent) => {
+      onTouchStartAt((ev as TouchEvent).changedTouches?.[0])
+    })
+    rendition.on('touchend', (ev: TouchEvent) => {
+      onTouchEndAt((ev as TouchEvent).changedTouches?.[0])
+    })
+
     // Retomar: si hay CFI guardado se muestra ése; si no, el inicio.
     const target = savedCfi(progress)
     void (target ? rendition.display(target) : rendition.display())
@@ -131,6 +278,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
       cancelled = true
       renditionRef.current = null
       bookRef.current = null
+      renderedRef.current.clear()
       try { rendition.destroy() } catch { /* ya destruido */ }
       try { epubBook.destroy() } catch { /* ya destruido */ }
     }
@@ -192,6 +340,92 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     }
   }, [])
 
+  // ── Acciones de anotación ────────────────────────────────────────────────
+  const closeSelectionMenu = useCallback(() => {
+    setMenu(null)
+    const selection = selectionRef.current
+    selectionRef.current = null
+    try {
+      const win = (selection?.contents as { window?: Window } | undefined)?.window
+      win?.getSelection?.()?.removeAllRanges()
+    } catch { /* iframe ya destruido */ }
+  }, [])
+
+  const addHighlight = async (color: HighlightColor) => {
+    const sel = selectionRef.current
+    closeSelectionMenu()
+    if (!sel) return
+    try {
+      const created = await api.createAnnotation(book.id, {
+        kind: 'highlight',
+        position: { startCfi: sel.startCfi, endCfi: sel.endCfi },
+        quoted_text: sel.text,
+        color,
+      })
+      setAnnotations(prev => [...prev, created])
+      setActionError(null)
+    } catch {
+      setActionError('No se pudo guardar el resaltado')
+    }
+  }
+
+  const saveNote = async (text: string) => {
+    const draft = noteDraft
+    setNoteDraft(null)
+    if (!draft) return
+    try {
+      if (draft.kind === 'edit') {
+        // sin PATCH en la API: editar una nota la re-crea con la misma posición
+        const old = draft.annotation
+        await api.deleteAnnotation(old.id)
+        const created = await api.createAnnotation(book.id, {
+          kind: old.kind, position: old.position, quoted_text: old.quoted_text, note: text, color: old.color,
+        })
+        setAnnotations(prev => [...prev.filter(a => a.id !== old.id), created])
+      } else {
+        const created = await api.createAnnotation(book.id, {
+          kind: 'note',
+          position: { startCfi: draft.selection.startCfi, endCfi: draft.selection.endCfi },
+          quoted_text: draft.selection.text,
+          note: text,
+          color: 'yellow',
+        })
+        setAnnotations(prev => [...prev, created])
+      }
+      setActionError(null)
+    } catch {
+      setActionError('No se pudo guardar la nota')
+    }
+  }
+
+  const toggleBookmark = async () => {
+    const here = cfiSection(currentCfiRef.current)
+    const existing = bookmarks.find(b =>
+      cfiSection((b.position as { startCfi?: unknown }).startCfi) === here)
+    if (here === null) return // todavía no hay posición (relocated pendiente)
+    try {
+      if (existing) {
+        await api.deleteAnnotation(existing.id)
+        setAnnotations(prev => prev.filter(a => a.id !== existing.id))
+      } else {
+        const cfi = currentCfiRef.current!
+        const created = await api.createAnnotation(book.id, {
+          kind: 'note', position: { startCfi: cfi, endCfi: cfi }, color: 'bookmark',
+        })
+        setAnnotations(prev => [...prev, created])
+      }
+      setActionError(null)
+    } catch {
+      setActionError('No se pudo guardar el marcador')
+    }
+  }
+
+  const openNoteFromMenu = () => {
+    const sel = selectionRef.current
+    if (sel) setNoteDraft({ kind: 'new', selection: sel })
+    setMenu(null)
+  }
+
   // ── Teclado ←/→/espacio/PageUp/PageDown (mismo guard que el lector PDF) ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -219,17 +453,16 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   }, [turnNext, turnPrev])
 
   // ── Swipe horizontal (flick más corto que arrastre, como en el PDF) ─────
-  const onTouchStart = (e: React.TouchEvent) => {
-    const t = e.changedTouches[0]
-    if (t) touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  // Compartido por los touch del stage (coarse) y los que epub.js re-emite.
+  const onTouchStartAt = (touch: { clientX: number; clientY: number } | null | undefined) => {
+    if (touch) touchStart.current = { x: touch.clientX, y: touch.clientY, t: Date.now() }
   }
-  const onTouchEnd = (e: React.TouchEvent) => {
+  const onTouchEndAt = (touch: { clientX: number; clientY: number } | null | undefined) => {
     const start = touchStart.current
     touchStart.current = null
-    if (!start) return
-    const t = e.changedTouches[0]
-    const dx = t.clientX - start.x
-    const dy = t.clientY - start.y
+    if (!start || !touch) return
+    const dx = touch.clientX - start.x
+    const dy = touch.clientY - start.y
     const dt = Date.now() - start.t
     const threshold = dt < 220 ? 36 : 70
     if (Math.abs(dx) > threshold && Math.abs(dx) > Math.abs(dy) * 1.2) {
@@ -237,6 +470,8 @@ export default function EpubReader({ book, progress, onBack }: Props) {
       if (dx < 0) turnNext(); else turnPrev()
     }
   }
+  const onTouchStart = (e: React.TouchEvent) => onTouchStartAt(e.changedTouches[0])
+  const onTouchEnd = (e: React.TouchEvent) => onTouchEndAt(e.changedTouches[0])
 
   // Un tap sobre una zona justo después de un swipe no repite la vuelta.
   const guardSwipe = (fn: () => void) => () => {
@@ -254,6 +489,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
           onBack={onBack}
           night={night}
           onToggleNight={() => setSettings(s => ({ ...s, theme: s.theme === 'night' ? 'day' : 'night' }))}
+          onNotes={() => setNotesOpen(v => !v)}
         />
       )}
 
@@ -262,6 +498,10 @@ export default function EpubReader({ book, progress, onBack }: Props) {
 
         {loading && !loadError && <div className="reader-loading">Cargando…</div>}
         {loadError && <p role="alert" className="lib-alert reader-error">{loadError}</p>}
+        {actionError && <p role="alert" className="lib-alert reader-error">{actionError}</p>}
+
+        {/* Marcador: cinta en la esquina, visible también en modo inmersivo */}
+        <BookmarkButton marked={bookmarked} onToggle={() => void toggleBookmark()} />
 
         {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
         <button type="button" className="reader-zone left" aria-label="Página anterior"
@@ -303,6 +543,43 @@ export default function EpubReader({ book, progress, onBack }: Props) {
       {chromeVisible && aaOpen && (
         <div id="aa-panel" className="aa-anchor">
           <AaPanel settings={settings} onChange={setSettings} />
+        </div>
+      )}
+
+      {notesOpen && (
+        <div className="notes-anchor">
+          <AnnotationsPanel
+            bookId={book.id}
+            format="epub"
+            onJump={pos => {
+              setNotesOpen(false)
+              const target = pos?.startCfi ?? pos?.cfi
+              if (typeof target === 'string' && target) void renditionRef.current?.display(target)
+            }}
+            onClose={() => setNotesOpen(false)}
+          />
+        </div>
+      )}
+
+      {menu && selectionRef.current && (
+        <SelectionMenu
+          x={menu.x}
+          y={menu.y}
+          onSelect={color => void addHighlight(color)}
+          onNote={openNoteFromMenu}
+          onClose={closeSelectionMenu}
+        />
+      )}
+
+      {noteDraft && (
+        <div className="note-anchor">
+          <NoteEditor
+            heading={noteDraft.kind === 'edit' ? 'Editar nota' : 'Nueva nota'}
+            initialNote={noteDraft.kind === 'edit' ? noteDraft.annotation.note : ''}
+            quotedText={noteDraft.kind === 'edit' ? noteDraft.annotation.quoted_text : noteDraft.selection.text}
+            onSave={text => void saveNote(text)}
+            onCancel={() => setNoteDraft(null)}
+          />
         </div>
       )}
     </div>
