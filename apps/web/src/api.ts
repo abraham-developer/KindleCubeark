@@ -22,14 +22,15 @@ export const api = {
   listBooks: () => request<Book[]>('/books'),
   getBook: (id: string) => request<{ book: Book; progress: { position: Position; percent: string } | null }>(`/books/${id}`),
   uploadBook: (file: File, onProgress?: (p: number) => void) => new Promise<Book>((resolve, reject) => {
+    const fd = new FormData(); fd.append('file', file)
     const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/books')
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
     xhr.onload = () => xhr.status === 201 ? resolve(JSON.parse(xhr.responseText)) : reject(new ApiError(xhr.status, JSON.parse(xhr.responseText || '{}').message ?? 'Error al subir'))
-    xhr.send(file)
+    xhr.send(fd)
   }),
   patchCover: (id: string, blob: Blob) => request<Book>(`/books/${id}/cover`, { method: 'PATCH', headers: { 'content-type': blob.type || 'image/jpeg' }, body: blob }),
   deleteBook: (id: string) => request<void>(`/books/${id}`, { method: 'DELETE' }),
-  patchProgress: (id: string, position: Position, percent: number) => request<any>(`/books/${id}/progress`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ position, percent }) }),
+  patchProgress: (id: string, position: Position, percent: number) => request<{ position: Position; percent: number; updated_at: string }>(`/books/${id}/progress`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ position, percent }) }),
   resetProgress: (id: string) => request<void>(`/books/${id}/progress`, { method: 'DELETE' }),
   listAnnotations: (bookId: string) => request<Annotation[]>(`/books/${bookId}/annotations`),
   createAnnotation: (bookId: string, body: Pick<Annotation, 'kind' | 'position'> & Partial<Pick<Annotation, 'quoted_text' | 'note' | 'color'>>) => request<Annotation>(`/books/${bookId}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
