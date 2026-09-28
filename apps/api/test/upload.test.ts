@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { buildApp } from '../src/app.js'
 import { resetDb } from './helpers/db.js'
 import { makeTestPdf, makeTestEpub, makeBadMimetypeEpub, makeBombEpub, makeCorruptPdf } from './fixtures.js'
+import { registerAndGetCookie, multipartBody, BOUNDARY } from './helpers/upload.js'
 import { readdir, rm } from 'node:fs/promises'
 
 const DATA_DIR = 'test-tmp/data'
-const BOUNDARY = '----kindlecubeformboundary7d1b'
 
 beforeEach(async () => {
   await resetDb()
@@ -16,22 +16,7 @@ afterAll(async () => {
   await rm('test-tmp', { recursive: true, force: true })
 })
 
-async function registerAndGetCookie(app: any, email = 'up@test.dev') {
-  const res = await app.inject({ method: 'POST', url: '/api/auth/register', payload: { email, password: 'password123' } })
-  return res.cookies.find((c: { name: string }) => c.name === 'session')!.value
-}
-
-// multipart/form-data real construido a mano: boundary + parte del archivo
-function multipartBody(buf: Buffer, name: string, type: string): Buffer {
-  const head = Buffer.from(
-    `--${BOUNDARY}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${name}"\r\n` +
-    `Content-Type: ${type}\r\n\r\n`,
-  )
-  const tail = Buffer.from(`\r\n--${BOUNDARY}--\r\n`)
-  return Buffer.concat([head, buf, tail])
-}
-
+// respuesta cruda (los tests de validación necesitan el status, no el libro)
 async function upload(app: any, cookie: string, buf: Buffer, name = 'libro.pdf', type = 'application/pdf') {
   return app.inject({
     method: 'POST',
@@ -72,7 +57,8 @@ describe('upload', () => {
     expect(body.title).toBe('Mi EPUB')
     expect(body.author).toBe('Escritora')
     expect(body.format).toBe('epub')
-    expect(body.cover_path).toBe(`${body.user_id}/${body.id}.jpg`)
+    expect(body.cover_url).toBe(`/api/files/${body.user_id}/${body.id}.jpg`)
+    expect(body.file_path).toBeUndefined()
     const stored = await readdir(DATA_DIR, { recursive: true })
     expect(stored.filter(f => f.endsWith('.epub') || f.endsWith('.jpg'))).toHaveLength(2)
     await app.close()
@@ -164,7 +150,7 @@ describe('upload', () => {
     const buf = makeTestEpub({ withCover: true, coverFormat: 'png' })
     const res = await upload(app, cookie, buf, 'libro.epub', 'application/epub+zip')
     expect(res.statusCode).toBe(201)
-    expect(res.json().cover_path).toBe(`${res.json().user_id}/${res.json().id}.png`)
+    expect(res.json().cover_url).toBe(`/api/files/${res.json().user_id}/${res.json().id}.png`)
     await app.close()
   })
 })

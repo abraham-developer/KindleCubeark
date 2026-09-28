@@ -1,4 +1,7 @@
 import Fastify from 'fastify'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import fastifyStatic from '@fastify/static'
 import { loadConfig } from './config.js'
 import { migrate } from './migrate.js'
 import { query } from './db.js'
@@ -32,5 +35,10 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
   await app.register(health)
   await app.register(auth)
   await app.register(books)
+  // estático solo en producción (los tests usan skipStatic); si el build web
+  // aún no existe, no se registra para no romper el arranque
+  if (!opts.skipStatic && existsSync(config.webDist)) {
+    await app.register(fastifyStatic, { root: path.resolve(config.webDist), wildcard: false })
+  }
   return app
 }
