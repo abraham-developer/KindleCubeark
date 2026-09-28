@@ -96,7 +96,13 @@ describe('SelectionMenu', () => {
     selection!.addRange(range)
     expect(selection!.toString()).toContain('resaltable')
 
-    fireEvent.click(screen.getByRole('button', { name: 'rosa' }))
+    const rosa = screen.getByRole('button', { name: 'rosa' })
+    // el mousedown sobre el botón (lo que un click real dispara primero)
+    // ejercita el preventDefault del menú: no borra la selección
+    fireEvent.mouseDown(rosa)
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(document.getSelection()!.toString()).toContain('resaltable')
+    fireEvent.click(rosa)
     expect(onSelect).toHaveBeenCalledWith('pink')
     // el mousedown del click sobre el menú no limpia la selección
     expect(document.getSelection()!.toString()).toContain('resaltable')

@@ -94,6 +94,10 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  // Espejo del menú en un ref: los handlers del rendition (closures del mount)
+  // consultan si hay menú vivo sin re-crearlos por render.
+  const menuOpenRef = useRef(false)
+  useEffect(() => { menuOpenRef.current = menu != null }, [menu])
   const [noteDraft, setNoteDraft] = useState<NoteDraft | null>(null)
   const [notesOpen, setNotesOpen] = useState(false)
   const selectionRef = useRef<SelectionInfo | null>(null)
@@ -249,8 +253,11 @@ export default function EpubReader({ book, progress, onBack }: Props) {
       if (!ev || ev.button !== 0) return
       const selection = contentsSelection(contents)
       if (selection.text) return // arrastre con selección: abrirá el menú
+      // tap sin selección sobre el contenido: un menú de selección vivo
+      // (abierto por una selección anterior) se cierra con el mismo gesto
+      if (menuOpenRef.current) closeSelectionMenu()
       const hostRect = host.getBoundingClientRect()
-      const xr = hostRect.width ? ev.clientX / hostRect.width : 0.5
+      const xr = hostRect.width ? (ev.clientX - hostRect.left) / hostRect.width : 0.5
       if (xr < 0.4) turnPrev()
       else if (xr > 0.6) turnNext()
       else setChromeVisible(v => !v)
@@ -375,12 +382,14 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     if (!draft) return
     try {
       if (draft.kind === 'edit') {
-        // sin PATCH en la API: editar una nota la re-crea con la misma posición
+        // sin PATCH en la API: editar una nota la re-crea con la misma posición.
+        // Create primero y delete después: si el delete falla queda duplicada
+        // (recuperable), pero si fuera al revés un fallo perdería la nota.
         const old = draft.annotation
-        await api.deleteAnnotation(old.id)
         const created = await api.createAnnotation(book.id, {
           kind: old.kind, position: old.position, quoted_text: old.quoted_text, note: text, color: old.color,
         })
+        await api.deleteAnnotation(old.id)
         setAnnotations(prev => [...prev.filter(a => a.id !== old.id), created])
       } else {
         const created = await api.createAnnotation(book.id, {

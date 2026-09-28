@@ -303,4 +303,46 @@ describe('PdfReader', () => {
     // el overlay desaparece del lector sin reabrir el libro
     expect(await until(() => document.querySelector('.pdf-highlights .hl.pink') == null)).toBe(true)
   })
+
+  it('cerrar el menú con un tap fuera no voltea la página (mouseup post-dismiss ignorado)', async () => {
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []) })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    await until(() => document.querySelector('.textLayer') != null)
+
+    // jsdom no resuelve rects: se stubbean selección y rects del canvas
+    const layer = document.querySelector('.textLayer') as HTMLElement
+    let cleared = false
+    const selStub = {
+      get isCollapsed() { return cleared },
+      rangeCount: 1, anchorNode: layer,
+      toString: () => (cleared ? '' : 'un texto seleccionable'),
+      removeAllRanges: () => { cleared = true },
+      getRangeAt: () => ({
+        getClientRects: () => [{ left: 12, top: 24, width: 100, height: 20, right: 112, bottom: 44 }],
+      }),
+    }
+    const selSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selStub as unknown as Selection)
+    const rectSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800 } as DOMRect)
+    // el stage también: sin él, el tap cae en la zona central (jsdom da rects en 0)
+    const stageRectSpy = vi.spyOn(HTMLDivElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800 } as DOMRect)
+
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    fireEvent.mouseUp(stage)
+    expect(await until(() => document.querySelector('.selection-menu') != null)).toBe(true)
+
+    // tap fuera: el mousedown cierra el menú (dismiss + removeAllRanges)…
+    fireEvent.mouseDown(stage)
+    expect(await until(() => document.querySelector('.selection-menu') == null)).toBe(true)
+    // …y el mouseup inmediato (dentro de ~250 ms del dismiss) NO voltea la página
+    fireEvent.mouseUp(layer, { clientX: 100 })
+    await realSleep(250)
+    expect(pages.has(6)).toBe(false)
+
+    selSpy.mockRestore()
+    rectSpy.mockRestore()
+    stageRectSpy.mockRestore()
+  })
 })

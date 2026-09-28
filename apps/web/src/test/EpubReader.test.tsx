@@ -382,4 +382,72 @@ describe('EpubReader', () => {
       'epubcfi(/6/4!/4/2/1:0,/4/4/1:2)', 'highlight',
     )
   })
+
+  it('editar una nota guarda la nueva antes de borrar la vieja (create-then-delete)', async () => {
+    const noted: Annotation = {
+      id: 'an-note', book_id: 'bk-epub', kind: 'note',
+      position: { startCfi: 'epubcfi(/6/4!/4/2/1:0)', endCfi: 'epubcfi(/6/4!/4/4/1:2)' },
+      quoted_text: 'con nota', note: 'comentario previo', color: 'yellow',
+      created_at: '2026-09-20T10:00:00Z',
+    }
+    const deleteAnnotation = vi.fn(async () => undefined)
+    const createAnnotation = vi.fn(async () => ({ ...noted, id: 'an-note-2', created_at: '2026-09-27T00:00:00Z' }))
+    apiSpies.push(...Object.values(mockApi({
+      listAnnotations: vi.fn(async () => [noted]), deleteAnnotation, createAnnotation,
+    })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+    expect(await until(() => renditionFns.annotations.add.mock.calls.length === 1)).toBe(true)
+
+    // click en el resaltado anclado con nota → editor con el texto previo
+    const [, , , cb] = renditionFns.annotations.add.mock.calls[0]
+    act(() => { (cb as () => void)() })
+    expect(await until(() => document.querySelector('.note-editor') != null)).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar' }))
+
+    // create primero, delete después: si delete falla, la nota ya existe
+    expect(await until(() => deleteAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(createAnnotation).toHaveBeenCalledWith('bk-epub', {
+      kind: 'note',
+      position: { startCfi: 'epubcfi(/6/4!/4/2/1:0)', endCfi: 'epubcfi(/6/4!/4/4/1:2)' },
+      quoted_text: 'con nota',
+      note: 'comentario previo',
+      color: 'yellow',
+    })
+    expect(createAnnotation.mock.invocationCallOrder[0])
+      .toBeLessThan(deleteAnnotation.mock.invocationCallOrder[0])
+    // el estado local queda con la nota nueva (el rendition la re-pinta)
+    expect(await until(() => renditionFns.annotations.add.mock.calls.length === 2)).toBe(true)
+    expect(renditionFns.annotations.remove).toHaveBeenCalledWith(
+      'epubcfi(/6/4!/4/2/1:0,/4/4/1:2)', 'highlight',
+    )
+  })
+
+  it('un tap sobre el contenido (mouseup sin selección) cierra el menú de selección', async () => {
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []) })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+
+    const fakeContents = {
+      window: {
+        getSelection: () => ({
+          isCollapsed: false, rangeCount: 1,
+          toString: () => 'párrafo elegido',
+          removeAllRanges: vi.fn(),
+          getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 30, top: 40, width: 200, height: 22 }) }),
+        }),
+      },
+    }
+    act(() => {
+      handlers.get('selected')!('epubcfi(/6/4!/4/2/1:0,/4/4/1:2)', fakeContents)
+    })
+    expect(await until(() => document.querySelector('.selection-menu') != null)).toBe(true)
+
+    // tap en el iframe sin selección: el menú debe cerrarse
+    const tapContents = { window: { getSelection: () => null } }
+    act(() => {
+      handlers.get('mouseup')!({ button: 0, clientX: 250 }, tapContents)
+    })
+    expect(await until(() => document.querySelector('.selection-menu') == null)).toBe(true)
+  })
 })

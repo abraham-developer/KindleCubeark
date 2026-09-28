@@ -68,6 +68,9 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const [notesOpen, setNotesOpen] = useState(false)
   const selectionRef = useRef<SelectionInfo | null>(null)
   const textLayerRef = useRef<HTMLDivElement | null>(null)
+  // Timestamp del último dismiss del menú: el mouseup que lo provocó no debe
+  // voltear la página (el removeAllRanges del dismiss deja la selección vacía).
+  const menuDismissedAt = useRef(0)
 
   const stageRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -210,6 +213,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const closeSelectionMenu = useCallback(() => {
     setMenu(null)
     selectionRef.current = null
+    menuDismissedAt.current = Date.now()
     window.getSelection()?.removeAllRanges()
   }, [])
 
@@ -219,12 +223,14 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     if (!draft) return
     try {
       if (draft.kind === 'edit') {
-        // sin PATCH en la API: editar una nota la re-crea con la misma posición
+        // sin PATCH en la API: editar una nota la re-crea con la misma posición.
+        // Create primero y delete después: si el delete falla queda duplicada
+        // (recuperable), pero si fuera al revés un fallo perdería la nota.
         const old = draft.annotation
-        await api.deleteAnnotation(old.id)
         const created = await api.createAnnotation(book.id, {
           kind: old.kind, position: old.position, quoted_text: old.quoted_text, note: text, color: old.color,
         })
+        await api.deleteAnnotation(old.id)
         setAnnotations(prev => [...prev.filter(a => a.id !== old.id), created])
       } else {
         // nota de página (o sobre una selección): position {page}, sin rects
@@ -325,6 +331,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     const target = e.target as HTMLElement | null
     // controles propios (cinta, menú, editor, panel): su click no voltea
     if (target?.closest?.('button, .selection-menu, .note-editor, .annotations-panel')) return
+    // un mouseup que cierra el menú (dismiss) no debe también voltear la página
+    if (Date.now() - menuDismissedAt.current < 250) return
     const sel = window.getSelection()
     const layer = textLayerRef.current
     if (sel && !sel.isCollapsed && sel.rangeCount > 0 && layer && sel.anchorNode &&
