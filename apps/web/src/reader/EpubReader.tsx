@@ -122,6 +122,11 @@ export default function EpubReader({ book, progress, onBack }: Props) {
 
   const sync = useProgressSync(book.id)
 
+  // Último percent conocido (inicializado con el guardado): mientras
+  // locations.generate() no termina, epub.js reporta start.percentage === 0
+  // y usarlo pisaría tanto la barra como el percent guardado en el server.
+  const percentRef = useRef(Number(progress?.percent ?? 0))
+
   // Ref de ajustes para los callbacks/effect que no deben recrearse por cambio.
   useEffect(() => {
     settingsRef.current = settings
@@ -132,10 +137,15 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   const onRelocated = useCallback((location?: Location) => {
     const start = location?.start
     if (!start) return
-    const pct = Math.round((start.percentage ?? 0) * 1000) / 10
+    // locations tiene «length» en runtime (epubjs no lo tipa): con 0, el
+    // percentage que manda epub.js es 0 y no es el percent real del libro.
+    const locCount = bookRef.current?.locations as { length?: () => number } | undefined
+    const locationsReady = typeof locCount?.length === 'function' && locCount.length() > 0
+    const pct = locationsReady ? Math.round((start.percentage ?? 0) * 1000) / 10 : null
+    if (pct != null) percentRef.current = pct
     // durante (y justo después de) un arrastre del slider, el percent que
     // pinta la barra lo manda el usuario, no el relocated del salto
-    if (Date.now() - sliderMovedAt.current > 500) setPercent(pct)
+    if (pct != null && Date.now() - sliderMovedAt.current > 500) setPercent(pct)
     setChapter(tocTitle(bookRef.current?.navigation as { toc?: NavItem[] } | undefined, start.href))
     // CFI actual: el marcador y la verificación de «página marcada» lo usan
     currentCfiRef.current = start.cfi
@@ -147,7 +157,9 @@ export default function EpubReader({ book, progress, onBack }: Props) {
       firstRelocatedRef.current = false // eco del resume: no re-guarda
       return
     }
-    sync.save({ cfi: start.cfi, percent: pct, section: start.index }, pct)
+    // sin locations el CFI igual se guarda, con el último percent conocido:
+    // así la posición queda bien guardada sin mandar un PATCH con percent 0
+    sync.save({ cfi: start.cfi, percent: percentRef.current, section: start.index }, percentRef.current)
   }, [sync])
 
   // ── Anotaciones del libro (una sola descarga; el POST/borrado actualiza) ──
@@ -540,6 +552,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
             onChange={e => {
               const value = Number(e.target.value)
               sliderMovedAt.current = Date.now() // el salto manda sobre el relocated
+              percentRef.current = value // el save sin locations usa este percent
               setPercent(value)
               jumpToPercent(value)
             }}

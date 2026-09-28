@@ -97,6 +97,8 @@ beforeEach(() => {
   handlers.clear()
   vi.mocked(ePub).mockReset()
   vi.mocked(ePub).mockReturnValue(bookFns as never)
+  // estado limpio del mock de locations: por defecto «aún sin generar»
+  bookFns.locations.length.mockReturnValue(0)
 })
 
 afterEach(() => {
@@ -148,7 +150,9 @@ describe('EpubReader', () => {
     await realSleep(1700) // más que el debounce: nada puede haberse programado
     expect(patchProgress).not.toHaveBeenCalled()
 
-    // relocated posterior (vuelta de página real) sí guarda
+    // relocated posterior (vuelta de página real) sí guarda: locations «listas»
+    // para que el percent del relocated (0.8) sea el que epub.js calcula
+    bookFns.locations.length.mockReturnValue(500)
     act(() => {
       handlers.get('relocated')!({
         start: { cfi: 'epubcfi(/6/8)', percentage: 0.8, index: 4 },
@@ -160,6 +164,39 @@ describe('EpubReader', () => {
     expect(id).toBe('bk-epub')
     expect(position).toEqual({ cfi: 'epubcfi(/6/8)', percent: 80, section: 4 })
     expect(percent).toBeCloseTo(80, 5)
+  })
+
+  it('el relocated con percentage 0 y locations sin generar guarda el CFI con el percent previo (no pisa el progreso con 0)', async () => {
+    const { patchProgress } = renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => handlers.has('relocated'))
+
+    // eco del resume: se descarta
+    act(() => {
+      handlers.get('relocated')!({
+        start: { cfi: 'epubcfi(/6/4)', percentage: 0, index: 2 },
+        end: { cfi: 'epubcfi(/6/5)', percentage: 0, index: 3 },
+      })
+    })
+
+    // primer volteo real ANTES de que locations.generate() termine: epub.js
+    // reporta percentage 0 (no undefined) — el percent 70 guardado no puede
+    // pisarse con 0
+    act(() => {
+      handlers.get('relocated')!({
+        start: { cfi: 'epubcfi(/6/8)', percentage: 0, index: 4 },
+        end: { cfi: 'epubcfi(/6/9)', percentage: 0, index: 5 },
+      })
+    })
+    expect(await until(() => patchProgress.mock.calls.length === 1, 120)).toBe(true)
+    const [, position, percent] = patchProgress.mock.calls[0]
+    // el CFI nuevo sí se guarda, con el último percent conocido
+    expect(position).toEqual({ cfi: 'epubcfi(/6/8)', percent: 70, section: 4 })
+    expect(percent).toBe(70)
+    // y el slider sigue pintando el percent real (70%), no el 0 del relocated
+    fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    expect(await until(() => screen.queryByRole('contentinfo') != null)).toBe(true)
+    const bottom = screen.getByRole('contentinfo') as HTMLElement
+    expect(bottom.textContent).toContain('70%')
   })
 
   it('el panel Aa aplica el tamaño al rendition (themes.fontSize) y el tema noche al documento', async () => {
@@ -243,6 +280,8 @@ describe('EpubReader', () => {
     expect(await until(() => bottom.textContent?.includes('70%') ?? false)).toBe(true)
 
     // un relocated cuyo href pertenece a un ítem del índice muestra el título
+    // (locations «listas» para que el percent del relocated sea real)
+    bookFns.locations.length.mockReturnValue(500)
     act(() => {
       handlers.get('relocated')!({
         start: { cfi: 'epubcfi(/6/12)', percentage: 0.62, index: 5, href: 'OEBPS/chapter3.xhtml' },
