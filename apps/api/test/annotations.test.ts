@@ -139,6 +139,42 @@ describe('annotations', () => {
     await app.close()
   })
 
+  it('rechaza payloads excesivos: más de 200 rects o textos de más de 10000 chars', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
+    const cookie = await registerAndGetCookie(app, 'anncap@test.dev')
+    const pdf = await uploadBook(app, cookie, await makeTestPdf(3, 'PDF caps'))
+    const epub = await uploadBook(app, cookie, makeTestEpub({ title: 'EPUB caps' }), 'libro.epub', 'application/epub+zip')
+
+    // 201 rects → 400 (cap de volumen por anotación)
+    const manyRects = Array.from({ length: 201 }, () => ({ x: 0.1, y: 0.1, w: 0.1, h: 0.1 }))
+    const tooMany = await postAnnotation(app, cookie, pdf.id, {
+      kind: 'highlight', position: { page: 1, rects: manyRects },
+    })
+    expect(tooMany.statusCode).toBe(400)
+
+    // quoted_text/note de 10001 chars → 400
+    const longText = 'a'.repeat(10_001)
+    const longQuoted = await postAnnotation(app, cookie, pdf.id, {
+      kind: 'highlight', position: { page: 1, rects: [{ x: 0, y: 0, w: 1, h: 1 }] }, quoted_text: longText,
+    })
+    expect(longQuoted.statusCode).toBe(400)
+    const longNote = await postAnnotation(app, cookie, epub.id, {
+      kind: 'note', position: { cfi: 'epubcfi(/6/4)' }, note: longText,
+    })
+    expect(longNote.statusCode).toBe(400)
+
+    // los límites justos sí pasan (200 rects y 10000 chars)
+    const okRects = await postAnnotation(app, cookie, pdf.id, {
+      kind: 'highlight', position: { page: 1, rects: Array.from({ length: 200 }, () => ({ x: 0.1, y: 0.1, w: 0.1, h: 0.1 })) },
+    })
+    expect(okRects.statusCode).toBe(201)
+    const okText = await postAnnotation(app, cookie, epub.id, {
+      kind: 'note', position: { cfi: 'epubcfi(/6/2)' }, note: 'b'.repeat(10_000),
+    })
+    expect(okText.statusCode).toBe(201)
+    await app.close()
+  })
+
   it('EPUB: highlight {startCfi,endCfi} y nota {cfi} o {startCfi} verbatim', async () => {
     const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
     const cookie = await registerAndGetCookie(app, 'annepub@test.dev')

@@ -17,6 +17,11 @@ interface AnnotationRow {
   created_at: string
 }
 
+// KINDS y COLORS arriba; caps de volumen para que una anotación no pueda
+// inflar la fila jsonb ni la DB (un PDF real no genera más de ~100 rects/página)
+const MAX_RECTS = 200
+const MAX_TEXT_CHARS = 10_000
+
 interface Rect {
   x: unknown
   y: unknown
@@ -60,6 +65,7 @@ function validatePosition(
     if (!pageOk) return false
     if (kind === 'highlight') {
       if (!Array.isArray(pos.rects) || pos.rects.length === 0) return false
+      if (pos.rects.length > MAX_RECTS) return false
       return pos.rects.every((r) => {
         const rect = (r ?? {}) as Rect
         return isUnit(rect.x) && isUnit(rect.y) && isUnit(rect.w) && isUnit(rect.h)
@@ -137,6 +143,9 @@ export default async function annotationRoutes(app: FastifyInstance) {
     const noteText = text(body.note)
     if (quoted == null || noteText == null) {
       return reply.code(400).send({ message: 'quoted_text y note deben ser texto' })
+    }
+    if (quoted.length > MAX_TEXT_CHARS || noteText.length > MAX_TEXT_CHARS) {
+      return reply.code(400).send({ message: `quoted_text y note no pueden superar ${MAX_TEXT_CHARS} caracteres` })
     }
     // el marcador es puro: kind note, sin texto citado ni nota
     if (color === 'bookmark' && (kind !== 'note' || quoted !== '' || noteText !== '')) {
