@@ -253,9 +253,9 @@ export default function EpubReader({ book, progress, onBack }: Props) {
       if (!ev || ev.button !== 0) return
       const selection = contentsSelection(contents)
       if (selection.text) return // arrastre con selección: abrirá el menú
-      // tap sin selección sobre el contenido: un menú de selección vivo
-      // (abierto por una selección anterior) se cierra con el mismo gesto
-      if (menuOpenRef.current) closeSelectionMenu()
+      // tap sin selección sobre el contenido con menú abierto: lo cierra y nada
+      // más (simétrico al guard de 250 ms del lector PDF: cerrar no voltea)
+      if (menuOpenRef.current) { closeSelectionMenu(); return }
       const hostRect = host.getBoundingClientRect()
       const xr = hostRect.width ? (ev.clientX - hostRect.left) / hostRect.width : 0.5
       if (xr < 0.4) turnPrev()

@@ -345,4 +345,51 @@ describe('PdfReader', () => {
     rectSpy.mockRestore()
     stageRectSpy.mockRestore()
   })
+
+  it('cerrar el menú por acción (color) no bloquea el volteo legítimo inmediato', async () => {
+    const createAnnotation = vi.fn(async () => ({
+      id: 'an2', book_id: 'bk1', kind: 'highlight',
+      position: { page: 7, rects: [{ x: 0.02, y: 0.03, w: 0.17, h: 0.03 }] },
+      quoted_text: 'un texto seleccionable', note: '', color: 'pink', created_at: '2026-09-27T00:00:00Z',
+    }))
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []), createAnnotation })))
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    await until(() => document.querySelector('.textLayer') != null)
+
+    // mismo stub de selección del test anterior (mutable vía removeAllRanges)
+    const layer = document.querySelector('.textLayer') as HTMLElement
+    let cleared = false
+    const selStub = {
+      get isCollapsed() { return cleared },
+      rangeCount: 1, anchorNode: layer,
+      toString: () => (cleared ? '' : 'un texto seleccionable'),
+      removeAllRanges: () => { cleared = true },
+      getRangeAt: () => ({
+        getClientRects: () => [{ left: 12, top: 24, width: 100, height: 20, right: 112, bottom: 44 }],
+      }),
+    }
+    const selSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selStub as unknown as Selection)
+    const rectSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800 } as DOMRect)
+    const stageRectSpy = vi.spyOn(HTMLDivElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800 } as DOMRect)
+
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    fireEvent.mouseUp(stage)
+    expect(await until(() => document.querySelector('.selection-menu') != null)).toBe(true)
+
+    // cierre por acción: pulsar un color crea el resaltado y cierra el menú
+    fireEvent.click(screen.getByRole('button', { name: 'rosa' }))
+    expect(await until(() => createAnnotation.mock.calls.length === 1)).toBe(true)
+    expect(document.querySelector('.selection-menu')).toBeNull()
+
+    // volteo legítimo inmediato (dentro de los ~250 ms): SÍ funciona
+    fireEvent.mouseUp(layer, { clientX: 100 })
+    expect(await until(() => pages.has(6))).toBe(true)
+
+    selSpy.mockRestore()
+    rectSpy.mockRestore()
+    stageRectSpy.mockRestore()
+  })
 })

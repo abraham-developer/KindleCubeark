@@ -213,9 +213,16 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const closeSelectionMenu = useCallback(() => {
     setMenu(null)
     selectionRef.current = null
-    menuDismissedAt.current = Date.now()
     window.getSelection()?.removeAllRanges()
   }, [])
+
+  // El stamp de dismiss vive sólo en el cierre por gesto externo (tap fuera /
+  // Escape, onClose del menú): los cierres por acción (color, Nota) no deben
+  // bloquear el volteo legítimo que venga inmediatamente después.
+  const dismissSelectionMenu = useCallback(() => {
+    menuDismissedAt.current = Date.now()
+    closeSelectionMenu()
+  }, [closeSelectionMenu])
 
   const saveNote = async (text: string) => {
     const draft = noteDraft
@@ -492,7 +499,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
             if (sel) setNoteDraft({ kind: 'new', position: { page: sel.page }, quoted: sel.quoted })
             setMenu(null)
           }}
-          onClose={closeSelectionMenu}
+          onClose={dismissSelectionMenu}
         />
       )}
 

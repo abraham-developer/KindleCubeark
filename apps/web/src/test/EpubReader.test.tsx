@@ -450,4 +450,39 @@ describe('EpubReader', () => {
     })
     expect(await until(() => document.querySelector('.selection-menu') == null)).toBe(true)
   })
+
+  it('el tap del iframe que cierra el menú no voltea la página (guard simétrico al PDF)', async () => {
+    apiSpies.push(...Object.values(mockApi({ listAnnotations: vi.fn(async () => []) })))
+    renderReader({ position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 }, percent: '70' })
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+
+    // rects del host: jsdom da ceros y el tap caería en el centro
+    const hostRectSpy = vi.spyOn(HTMLDivElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 0, top: 0, width: 600, height: 800 } as DOMRect)
+
+    // menú de selección abierto (selección previa en el iframe)
+    const fakeContents = {
+      window: {
+        getSelection: () => ({
+          isCollapsed: false, rangeCount: 1,
+          toString: () => 'párrafo elegido',
+          removeAllRanges: vi.fn(),
+          getRangeAt: () => ({ getBoundingClientRect: () => ({ left: 30, top: 40, width: 200, height: 22 }) }),
+        }),
+      },
+    }
+    act(() => {
+      handlers.get('selected')!('epubcfi(/6/4!/4/2/1:0,/4/4/1:2)', fakeContents)
+    })
+    expect(await until(() => document.querySelector('.selection-menu') != null)).toBe(true)
+
+    // tap en la zona izquierda del iframe (sin selección): cierra el menú y NO voltea
+    act(() => {
+      handlers.get('mouseup')!({ button: 0, clientX: 100 }, { window: { getSelection: () => null } })
+    })
+    expect(await until(() => document.querySelector('.selection-menu') == null)).toBe(true)
+    expect(renditionFns.prev).not.toHaveBeenCalled()
+    expect(renditionFns.next).not.toHaveBeenCalled()
+    hostRectSpy.mockRestore()
+  })
 })
