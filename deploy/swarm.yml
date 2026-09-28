@@ -48,6 +48,8 @@ services:
         max_attempts: 3
     labels:
       - traefik.enable=true
+      # el app está en dos redes: forzar a traefik a resolverlo por `admin`
+      - traefik.docker.network=admin
       - traefik.http.routers.kindle.rule=Host(`kindle.cubeark.dev`)
       - traefik.http.routers.kindle.entrypoints=websecure
       - traefik.http.routers.kindle.tls.certresolver=letsencryptresolver
@@ -55,7 +57,8 @@ services:
       - traefik.http.services.kindle.loadbalancer.server.port=3000
       - traefik.http.services.kindle.loadbalancer.passHostHeader=1
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      # wget no existe en node:20-slim: el chequeo va con fetch nativo de node
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 15s
