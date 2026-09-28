@@ -17,13 +17,21 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
   const config = { ...loadConfig(), ...opts.config }
   // margen del 25% para el overhead de multipart
   const app = Fastify({ logger: false, bodyLimit: Math.ceil(config.maxUploadMb * 1.25 * 1024 * 1024) })
+  const serveSpa = !opts.skipStatic && existsSync(path.resolve(config.webDist))
   app.decorate('config', config)
   app.setErrorHandler((err, req, reply) => {
     const status = (err as { statusCode?: number }).statusCode ?? 500
     if (status >= 500) req.log.error(err)
     reply.status(status).send({ message: status >= 500 ? 'Error interno' : err.message })
   })
-  app.setNotFoundHandler((_req, reply) => reply.status(404).send({ message: 'No encontrado' }))
+  app.setNotFoundHandler((req, reply) => {
+    // fallback SPA: GET a ruta no-api sin match (deep links del router) sirve el shell;
+    // /api/* y métodos no-GET siguen devolviendo 404 JSON
+    if (serveSpa && req.method === 'GET' && !req.url.startsWith('/api')) {
+      return reply.sendFile('index.html')
+    }
+    reply.status(404).send({ message: 'No encontrado' })
+  })
   if (config.runMigrations) await migrate()
   // sin fastify-plugin: se llama directo para que @fastify/secure-session
   // (que sí es fp) decore la instancia raíz y req.session sea visible
@@ -39,7 +47,7 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
   await app.register(annotations)
   // estático solo en producción (los tests usan skipStatic); si el build web
   // aún no existe, no se registra para no romper el arranque
-  if (!opts.skipStatic && existsSync(config.webDist)) {
+  if (serveSpa) {
     await app.register(fastifyStatic, { root: path.resolve(config.webDist), wildcard: false })
   }
   return app
