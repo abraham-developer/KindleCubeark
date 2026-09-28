@@ -36,7 +36,7 @@ O a mano (necesita Postgres en `localhost:5432`, usuario `kindle`, clave `kindle
 ```sh
 # .env.local en la raíz con:
 # DATABASE_URL=postgres://kindle:kindle@localhost:5432/kindle
-# SESSION_SECRET=<32+ bytes>
+# SESSION_SECRET=<exactamente 32 bytes (32 caracteres hex: openssl rand -hex 16)>
 cd apps/api && npm install && npm run dev    # API en :3000 (migra sola al arrancar)
 cd apps/web && npm install && npm run dev    # Vite en :5173 con proxy /api → :3000
 ```
@@ -72,11 +72,13 @@ git clone <url-del-repo> kindleCubeark && cd kindleCubeark
 
 ```sh
 openssl rand -hex 32 | docker secret create kindle_db_password -
-openssl rand -hex 32 | docker secret create kindle_session_secret -
+openssl rand -hex 16 | docker secret create kindle_session_secret -
 docker secret ls
 ```
 
-(`kindle_session_secret` debe tener 32+ bytes: es la clave del cifrado de sesiones.)
+(`kindle_session_secret` debe tener EXACTAMENTE 32 bytes: es la clave de
+`@fastify/secure-session`, que lanza «key must be 32 bytes» con cualquier otra
+longitud. `openssl rand -hex 16` produce 32 caracteres hex = 32 bytes.)
 
 ### 3. Build y etiquetado de la imagen (en el manager)
 
@@ -139,9 +141,9 @@ retomado sobre la nueva réplica.
 | Variable | Uso |
 |---|---|
 | `DATABASE_URL` | URL de Postgres en claro (compose dev). Si no está, la API arma la URL con `DB_HOST`/`DB_USER`/`DB_NAME` + contraseña leída de `DB_PASSWORD_FILE` (docker secret). En producción sin ninguna de las dos, el arranque falla. |
-| `SESSION_SECRET` | Clave de sesiones (32+ bytes) en claro (dev). En producción se lee de `SESSION_SECRET_FILE` (docker secret); sin archivo ni env, el arranque falla. |
+| `SESSION_SECRET` | Clave de sesiones, EXACTAMENTE 32 bytes (32 caracteres hex, `openssl rand -hex 16`); `@fastify/secure-session` lanza «key must be 32 bytes» con otra longitud. En claro (dev); en producción se lee de `SESSION_SECRET_FILE` (docker secret); sin archivo ni env, el arranque falla. |
 | `DATA_DIR` | Directorio de libros y covers (default `/data`, volumen `kindle_book_data`). |
-| `MAX_UPLOAD_MB` | Límite de subida (default `100`). |
+| `MAX_UPLOAD_MB` | Límite de subida (default `100`). Es el cap real de archivos: `bodyLimit` de Fastify no aplica a multipart, el toque de tamaño lo pone `limits.fileSize` de @fastify/multipart con este valor. |
 | `WEB_DIST` | Directorio del build SPA (default `web/dist` relativo al runtime). |
 | `PORT` | Puerto de la API (default `3000`). |
 | `RUN_MIGRATIONS` | `false` para desactivar la migración al arrancar. |
