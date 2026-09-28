@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import fastifyStatic from '@fastify/static'
 import { loadConfig } from './config.js'
-import { migrate } from './migrate.js'
+import { migrate, migrateWithRetry } from './migrate.js'
 import { query } from './db.js'
 import session from './plugins/session.js'
 import { verifySession } from './plugins/auth.js'
@@ -32,7 +32,7 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
     }
     reply.status(404).send({ message: 'No encontrado' })
   })
-  if (config.runMigrations) await migrate()
+  if (config.runMigrations) await migrateWithRetry(migrate)
   // sin fastify-plugin: se llama directo para que @fastify/secure-session
   // (que sí es fp) decore la instancia raíz y req.session sea visible
   await session(app)
