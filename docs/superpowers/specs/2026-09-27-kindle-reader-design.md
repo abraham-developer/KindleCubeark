@@ -67,7 +67,7 @@ reading_progress(
 )
 
 annotations(
-  id uuid PK, user_id uuid FK users, book_id uuid FK books ON DELETE CASCADE,
+  id uuid PK, user_id uuid FK users ON DELETE CASCADE, book_id uuid FK books ON DELETE CASCADE,
   kind text CHECK (kind IN ('highlight','note')),
   position jsonb NOT NULL,           -- ver §7
   quoted_text text NOT NULL DEFAULT '',
@@ -118,7 +118,7 @@ GET  /api/health                → 200 (usado por HEALTHCHECK)
 - **EPUB:** selección de texto → menú flotante (colores amarillo/gris/rosa/azul + "Nota"). `position = { startCfi, endCfi }`. Se renderizan con `epub.js` (`addAnnotation`/overlays) al cargar el capítulo. Las notas anclan al resaltado; tocar el resaltado abre la nota.
 - **PDF:** selección sobre la textLayer de pdf.js → mismas acciones. `position = { page, rects: [{x,y,w,h}] }` con coordenadas normalizadas 0–1 sobre la página, así los resaltados se repintan igual en cualquier tamaño de ventana.
 - **Nota de página** (PDF, incluidos escaneados): `position = { page }`, `kind = 'note'`, sin rects.
-- **Panel "Mis anotaciones":** lista del libro en orden de lectura (por posición), cita + nota + color; tocar salta a la posición (mismo mecanismo de navegación del reader); borrar con confirmación inline. Sin export ni vista global entre libros.
+- **Panel "Mis anotaciones":** lista del libro en orden de lectura (por posición), cita + nota + color; tocar salta a la posición (mismo mecanismo de navegación del reader); borrar con confirmación inline. Los marcadores no aparecen en este panel (se ven en el libro). Sin export ni vista global entre libros.
 
 ## 8. UI / Reader
 
