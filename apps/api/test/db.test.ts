@@ -31,6 +31,6 @@ describe('db', () => {
     // tras quitar el archivo, migrate vuelve a quedar en estado limpio
     await migrate()
     const { rows } = await query(`SELECT name FROM _migrations ORDER BY name`)
-    expect(rows.map(r => r.name)).toEqual(['001_init.sql'])
+    expect(rows.map(r => r.name)).toEqual(['001_init.sql', '002_folders.sql'])
   })
 })
