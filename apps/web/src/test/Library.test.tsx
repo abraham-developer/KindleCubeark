@@ -364,3 +364,55 @@ describe('Library — carpetas', () => {
     expect(screen.getByTestId('folder-card-all')).toBeInTheDocument()
   })
 })
+
+describe('Library — carpetas crear/editar (diálogo)', () => {
+  it('crear carpeta desde «+ Nueva carpeta»', async () => {
+    const createFolder = vi.fn().mockResolvedValue({ ...folderA, id: 'f9', name: 'Género' })
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listFolders: vi.fn()
+        .mockResolvedValueOnce([folderA])
+        .mockResolvedValueOnce([folderA, { ...folderA, id: 'f9', name: 'Género', color: '#3b82f6', book_count: 0 }]),
+      createFolder,
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByTestId('new-folder'))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Género')
+    await userEvent.click(screen.getByRole('button', { name: /crear carpeta/i }))
+    expect(createFolder).toHaveBeenCalledWith('Género', expect.any(String))
+    expect(await screen.findByTestId('folder-card-f9')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('editar carpeta desde su menú precarga los valores', async () => {
+    const updateFolder = vi.fn().mockResolvedValue({ ...folderA, name: 'Novelas rojas' })
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      updateFolder,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('folder-card-f1')
+    await userEvent.click(within(card).getByRole('button', { name: /opciones de la carpeta/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /editar/i }))
+    await userEvent.clear(screen.getByLabelText('Nombre'))
+    await userEvent.type(screen.getByLabelText('Nombre'), 'Novelas rojas')
+    await userEvent.click(screen.getByRole('button', { name: /guardar/i }))
+    expect(updateFolder).toHaveBeenCalledWith('f1', { name: 'Novelas rojas', color: '#ef4444' })
+  })
+
+  it('eliminar carpeta con confirmación y los libros vuelven a Todos', async () => {
+    const deleteFolder = vi.fn().mockResolvedValue(undefined)
+    const listBooks = vi.fn().mockResolvedValue([{ ...books[0], folder_id: 'f1' }, books[1]])
+    apiSpies.push(...Object.values(mockApi({
+      listBooks, listFolders: vi.fn().mockResolvedValue([folderA]), deleteFolder,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('folder-card-f1')
+    await userEvent.click(within(card).getByRole('button', { name: /opciones de la carpeta/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /^eliminar$/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /confirmar/i }))
+    expect(deleteFolder).toHaveBeenCalledWith('f1')
+    expect(await screen.findByTestId('book-card-b2')).toBeInTheDocument() // recargó, vista Todos
+  })
+})

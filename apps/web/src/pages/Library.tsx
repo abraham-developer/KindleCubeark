@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Book, type Folder } from '../api'
 import { useAuth } from '../state/AuthContext'
+import FolderDialog from './FolderDialog'
 
 const ACCEPT = '.pdf,.epub'
 
@@ -301,6 +302,7 @@ export default function Library() {
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null)
   const [folders, setFolders] = useState<Folder[]>([])
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
+  const [editing, setEditing] = useState<{ kind: 'new' } | { kind: 'edit'; folder: Folder } | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -413,7 +415,7 @@ export default function Library() {
           {folders.map(f => (
             <FolderCard key={f.id} folder={f} active={f.id === activeFolderId}
               onOpen={() => setActiveFolderId(f.id)}
-              onEdit={() => { /* Task 7: abre FolderDialog */ }}
+              onEdit={() => setEditing({ kind: 'edit', folder: f })}
               onDelete={async () => {
                 setNotice(null)
                 try {
@@ -426,7 +428,7 @@ export default function Library() {
               }} />
           ))}
           <button type="button" className="folder-card new" data-testid="new-folder"
-            onClick={() => { /* Task 7: abre FolderDialog en modo crear */ }}>+ Nueva carpeta</button>
+            onClick={() => setEditing({ kind: 'new' })}>+ Nueva carpeta</button>
         </div>
       </section>
 
@@ -494,6 +496,12 @@ export default function Library() {
         )}
 
       <AddBookControl uploading={uploading} onFile={handleFile} />
+
+      {editing && (
+        <FolderDialog folder={editing.kind === 'edit' ? editing.folder : null}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); void load() }} />
+      )}
     </main>
   )
 }
