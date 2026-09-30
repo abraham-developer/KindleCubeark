@@ -132,6 +132,32 @@ export default async function bookRoutes(app: FastifyInstance) {
     return reply.code(204).send()
   })
 
+  // mover/sacar de carpeta: null lo deja en la biblioteca (vista «Todos»)
+  app.patch('/api/books/:id/folder', { preHandler: app.verifySession }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { rows } = await app.query<BookRow>(
+      'SELECT * FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+    )
+    if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
+
+    const { folder_id } = (req.body ?? {}) as { folder_id?: unknown }
+    if (folder_id !== null) {
+      if (typeof folder_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(folder_id)) {
+        return reply.code(400).send({ message: 'folder_id inválido' })
+      }
+      // carpeta ajena o inexistente → 404 (la FK ya garantiza consistencia)
+      const { rowCount } = await app.query(
+        'SELECT 1 FROM folders WHERE id = $1 AND user_id = $2', [folder_id, req.user!.id],
+      )
+      if (!rowCount) return reply.code(404).send({ message: 'Carpeta no encontrada' })
+    }
+    const { rows: up } = await app.query<BookRow>(
+      'UPDATE books SET folder_id = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      [folder_id, id, req.user!.id],
+    )
+    return toClient(up[0])
+  })
+
   // la portada del PDF se genera en el navegador y llega justo después del upload
   // (spec §5). Acepta cuerpo raw image/* y también multipart, por magic bytes.
   app.patch('/api/books/:id/cover', { preHandler: app.verifySession }, async (req, reply) => {

@@ -2,8 +2,9 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { buildApp } from '../src/app.js'
 import { resetDb } from './helpers/db.js'
-import { registerAndGetCookie } from './helpers/upload.js'
+import { registerAndGetCookie, uploadBook } from './helpers/upload.js'
 import { pool } from '../src/db.js'
+import { makeTestPdf } from './fixtures.js'
 
 beforeEach(async () => { await resetDb() })
 afterAll(async () => { await pool.end().catch(() => {}) })
@@ -148,6 +149,79 @@ describe('folders PATCH y DELETE', () => {
 
     const { rows: [after] } = await pool.query('SELECT folder_id FROM books WHERE id = $1', [book.id])
     expect(after.folder_id).toBeNull()
+  })
+})
+
+describe('books folder (mover/sacar)', () => {
+  async function setup(app: any) {
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const book = await uploadBook(app, cookie, await makeTestPdf(2))
+    const folder = (await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookie },
+      payload: { name: 'N', color: '#ff00aa' } })).json()
+    return { cookie, book, folder }
+  }
+
+  it('GET /api/books expone folder_id (null al inicio, asignado tras PATCH)', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: 'test-tmp/data' } })
+    const { cookie, book, folder } = await setup(app)
+
+    let list = (await app.inject({ method: 'GET', url: '/api/books', cookies: { session: cookie } })).json()
+    expect(list[0].folder_id).toBeNull()
+
+    const res = await app.inject({ method: 'PATCH', url: `/api/books/${book.id}/folder`,
+      cookies: { session: cookie }, payload: { folder_id: folder.id } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual(expect.objectContaining({ id: book.id, folder_id: folder.id }))
+
+    list = (await app.inject({ method: 'GET', url: '/api/books', cookies: { session: cookie } })).json()
+    expect(list[0].folder_id).toBe(folder.id)
+  })
+
+  it('sacar con folder_id null', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: 'test-tmp/data' } })
+    const { cookie, book, folder } = await setup(app)
+    await app.inject({ method: 'PATCH', url: `/api/books/${book.id}/folder`,
+      cookies: { session: cookie }, payload: { folder_id: folder.id } })
+
+    const res = await app.inject({ method: 'PATCH', url: `/api/books/${book.id}/folder`,
+      cookies: { session: cookie }, payload: { folder_id: null } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().folder_id).toBeNull()
+  })
+
+  it('400 si folder_id no es null ni uuid', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: 'test-tmp/data' } })
+    const { cookie, book } = await setup(app)
+    const res = await app.inject({ method: 'PATCH', url: `/api/books/${book.id}/folder`,
+      cookies: { session: cookie }, payload: { folder_id: 'pepe' } })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('404 con carpeta ajena/inexistente y con libro ajeno; 401 sin sesión', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: 'test-tmp/data' } })
+    const cookieA = await registerAndGetCookie(app, 'a@test.dev')
+    const cookieB = await registerAndGetCookie(app, 'b@test.dev')
+    const folderA = (await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookieA },
+      payload: { name: 'De A', color: '#ff00aa' } })).json()
+    const bookB = await uploadBook(app, cookieB, await makeTestPdf(2))
+
+    // carpeta de A, libro de B: la búsqueda de carpeta scopea por usuario → 404
+    const res1 = await app.inject({ method: 'PATCH', url: `/api/books/${bookB.id}/folder`,
+      cookies: { session: cookieB }, payload: { folder_id: folderA.id } })
+    expect(res1.statusCode).toBe(404)
+
+    // libro de B, sesión de A → 404
+    const res2 = await app.inject({ method: 'PATCH', url: `/api/books/${bookB.id}/folder`,
+      cookies: { session: cookieA }, payload: { folder_id: null } })
+    expect(res2.statusCode).toBe(404)
+
+    const res3 = await app.inject({ method: 'PATCH', url: '/api/books/00000000-0000-4000-8000-000000000000/folder',
+      cookies: { session: cookieA }, payload: { folder_id: null } })
+    expect(res3.statusCode).toBe(404)
+
+    const noSesion = await app.inject({ method: 'PATCH', url: `/api/books/${bookB.id}/folder`,
+      payload: { folder_id: null } })
+    expect(noSesion.statusCode).toBe(401)
   })
 })
 
