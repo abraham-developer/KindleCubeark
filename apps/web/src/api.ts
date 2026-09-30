@@ -11,8 +11,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type Position = { page: number } | { cfi: string; percent: number; section: number }
-export type Book = { id: string; title: string; author: string; format: 'pdf' | 'epub'; cover_url: string | null; file_url: string; total_pages: number | null; file_size: number; added_at: string; percent: string | null; position: Position | null; last_read: string | null }
+export type Book = { id: string; title: string; author: string; format: 'pdf' | 'epub'; cover_url: string | null; file_url: string; total_pages: number | null; file_size: number; added_at: string; folder_id: string | null; percent: string | null; position: Position | null; last_read: string | null }
 export type Annotation = { id: string; book_id: string; kind: 'highlight' | 'note'; position: any; quoted_text: string; note: string; color: string; created_at: string }
+export type Folder = { id: string; name: string; color: string; book_count: number; created_at: string }
 
 export const api = {
   register: (email: string, password: string) => request<{ id: string; email: string }>('/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) }),
@@ -32,6 +33,11 @@ export const api = {
   deleteBook: (id: string) => request<void>(`/books/${id}`, { method: 'DELETE' }),
   patchProgress: (id: string, position: Position, percent: number) => request<{ position: Position; percent: number; updated_at: string }>(`/books/${id}/progress`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ position, percent }) }),
   resetProgress: (id: string) => request<void>(`/books/${id}/progress`, { method: 'DELETE' }),
+  listFolders: () => request<Folder[]>('/folders'),
+  createFolder: (name: string, color: string) => request<Folder>('/folders', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, color }) }),
+  updateFolder: (id: string, patch: { name?: string; color?: string }) => request<Folder>(`/folders/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
+  deleteFolder: (id: string) => request<void>(`/folders/${id}`, { method: 'DELETE' }),
+  setBookFolder: (bookId: string, folderId: string | null) => request<Book>(`/books/${bookId}/folder`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folder_id: folderId }) }),
   listAnnotations: (bookId: string) => request<Annotation[]>(`/books/${bookId}/annotations`),
   createAnnotation: (bookId: string, body: Pick<Annotation, 'kind' | 'position'> & Partial<Pick<Annotation, 'quoted_text' | 'note' | 'color'>>) => request<Annotation>(`/books/${bookId}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   deleteAnnotation: (id: string) => request<void>(`/annotations/${id}`, { method: 'DELETE' }),

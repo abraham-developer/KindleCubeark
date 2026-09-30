@@ -58,3 +58,50 @@ describe('api.uploadBook', () => {
     await expect(promise).rejects.toMatchObject({ status: 500, message: 'Error al subir' })
   })
 })
+
+describe('api — carpetas y setBookFolder', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // respuesta JSON reutilizable para todas las rutas (los métodos solo la consumen)
+  function stubFetch() {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify([{ id: 'f1', name: 'N', color: '#000000', book_count: 2, created_at: '' }]),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('listFolders hace GET /api/folders y expone book_count como número', async () => {
+    const fetchMock = stubFetch()
+    const [f] = await api.listFolders()
+    expect(fetchMock).toHaveBeenCalledWith('/api/folders', expect.anything()) // GET implícito
+    expect(f).toEqual({ id: 'f1', name: 'N', color: '#000000', book_count: 2, created_at: '' })
+  })
+
+  it('createFolder/updateFolder/deleteFolder usan método y cuerpo correctos', async () => {
+    const fetchMock = stubFetch()
+    await api.createFolder('Novelas', '#ff00aa')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/folders', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ name: 'Novelas', color: '#ff00aa' }),
+    }))
+    await api.updateFolder('f1', { color: '#123456' })
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/folders/f1', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ color: '#123456' }),
+    }))
+    await api.deleteFolder('f1')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/folders/f1', expect.objectContaining({ method: 'DELETE' }))
+  })
+
+  it('setBookFolder manda PATCH /api/books/:id/folder con folder_id (o null)', async () => {
+    const fetchMock = stubFetch()
+    await api.setBookFolder('b1', 'f1')
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/books/b1/folder', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ folder_id: 'f1' }),
+    }))
+    await api.setBookFolder('b1', null)
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/books/b1/folder', expect.objectContaining({
+      method: 'PATCH', body: JSON.stringify({ folder_id: null }),
+    }))
+  })
+})
