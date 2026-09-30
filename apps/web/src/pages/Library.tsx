@@ -1,10 +1,16 @@
 // apps/web/src/pages/Library.tsx — biblioteca: grilla, seguir leyendo, subida y menú contextual (Task 11).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type Book } from '../api'
+import { api, type Book, type Folder } from '../api'
 import { useAuth } from '../state/AuthContext'
 
 const ACCEPT = '.pdf,.epub'
+
+export const SWATCH_COLORS = ['#ef4444', '#f59e0b', '#3b82f6', '#22c55e', '#a855f7', '#ec4899', '#14b8a6', '#6b7280'] as const
+export const SWATCH_NAMES: Record<string, string> = {
+  '#ef4444': 'rojo', '#f59e0b': 'ámbar', '#3b82f6': 'azul', '#22c55e': 'verde',
+  '#a855f7': 'violeta', '#ec4899': 'rosa', '#14b8a6': 'turquesa', '#6b7280': 'gris',
+}
 
 function errorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
@@ -40,10 +46,12 @@ function ProgressBar({ value, className }: { value: number; className?: string }
 }
 
 /** Menú contextual con confirmación en línea para eliminar. */
-function ConfirmMenu({ book, onContinue, onReset, onDelete }: {
+function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onDelete }: {
   book: Book
+  folders: Folder[]
   onContinue: () => void
   onReset: () => Promise<void>
+  onMove: (folderId: string | null) => Promise<void>
   onDelete: () => Promise<void>
 }) {
   const [open, setOpen] = useState(false)
@@ -76,6 +84,14 @@ function ConfirmMenu({ book, onContinue, onReset, onDelete }: {
         <div className="menu" role="menu" aria-label={`Acciones de ${book.title}`}>
           <button type="button" role="menuitem" disabled={busy} onClick={() => act(async () => { onContinue() })}>Continuar</button>
           <button type="button" role="menuitem" disabled={busy} onClick={() => act(onReset)}>Desde el principio</button>
+          {folders.map(f => (
+            <button type="button" key={f.id} role="menuitem" disabled={busy}
+              onClick={() => act(() => onMove(f.id))}>Mover a {f.name}</button>
+          ))}
+          {book.folder_id && (
+            <button type="button" role="menuitem" disabled={busy}
+              onClick={() => act(() => onMove(null))}>Sacar de la carpeta</button>
+          )}
           <button type="button" role="menuitem" className="danger" disabled={busy}
             onClick={() => armed ? act(onDelete) : setArmed(true)}>
             {armed ? 'Confirmar eliminación' : 'Eliminar'}
@@ -87,7 +103,13 @@ function ConfirmMenu({ book, onContinue, onReset, onDelete }: {
   )
 }
 
-function BookCard({ book, onReset, onDelete }: { book: Book; onReset: (b: Book) => Promise<void>; onDelete: (b: Book) => Promise<void> }) {
+function BookCard({ book, folders, onMove, onReset, onDelete }: {
+  book: Book
+  folders: Folder[]
+  onMove: (bookId: string, folderId: string | null) => Promise<void>
+  onReset: (b: Book) => Promise<void>
+  onDelete: (b: Book) => Promise<void>
+}) {
   const navigate = useNavigate()
   const open = () => navigate(`/reader/${book.id}`)
   const pct = book.percent == null ? 0 : Number(book.percent)
@@ -102,7 +124,8 @@ function BookCard({ book, onReset, onDelete }: { book: Book; onReset: (b: Book) 
       <button type="button" className="book-cover" onClick={open} aria-label={`Abrir ${book.title}`}>
         <Cover book={book} />
       </button>
-      <ConfirmMenu book={book} onContinue={open} onReset={() => onReset(book)} onDelete={() => onDelete(book)} />
+      <ConfirmMenu book={book} folders={folders} onContinue={open} onReset={() => onReset(book)}
+        onMove={folderId => onMove(book.id, folderId)} onDelete={() => onDelete(book)} />
       <div className="book-meta">
         <h3 className="book-title">{book.title}</h3>
         <p className="book-author">{book.author}</p>
@@ -111,6 +134,76 @@ function BookCard({ book, onReset, onDelete }: { book: Book; onReset: (b: Book) 
         {size && <span className="book-size">{size}</span>}
       </div>
     </article>
+  )
+}
+
+/** Tarjeta de carpeta: color, nombre, contador, menú editar/eliminar y zona de drop. */
+function FolderCard({ folder, active, onOpen, onEdit, onDelete, onDropBook }: {
+  folder: Folder
+  active: boolean
+  onOpen: () => void
+  onEdit: () => void
+  onDelete: () => Promise<void>
+  onDropBook?: (bookId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [armed, setArmed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [over, setOver] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) { setOpen(false); setArmed(false) } }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); setArmed(false) } }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
+
+  const close = () => { setOpen(false); setArmed(false) }
+  const act = async (fn: () => Promise<void>) => {
+    setBusy(true)
+    try { await fn(); close() } finally { setBusy(false) }
+  }
+  // sin onDropBook la tarjeta no es zona de drop (se activa en Task 8)
+  const dropProps = onDropBook ? {
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setOver(true) },
+    onDragLeave: () => setOver(false),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault(); setOver(false)
+      const id = e.dataTransfer?.getData('text/book-id') || e.dataTransfer?.getData('text/plain')
+      if (id) onDropBook(id)
+    },
+  } : {}
+
+  return (
+    <div className={`folder-card ${active ? 'active' : ''} ${over ? 'drag-over' : ''}`}
+      data-testid={`folder-card-${folder.id}`}
+      style={{ '--folder-color': folder.color } as React.CSSProperties}
+      {...dropProps}>
+      <button type="button" className="folder-open" onClick={onOpen} aria-label={`Carpeta ${folder.name}`}>
+        <span className="folder-swatch" aria-hidden="true" />
+        <span className="folder-name">{folder.name}</span>
+        <span className="folder-count">{folder.book_count}</span>
+      </button>
+      <div className="menu-wrap" ref={ref}>
+        <button type="button" className="menu-btn" aria-label={`Opciones de la carpeta ${folder.name}`}
+          aria-haspopup="menu" aria-expanded={open}
+          onClick={() => { setOpen(o => !o); setArmed(false) }}>⋯</button>
+        {open && (
+          <div className="menu" role="menu" aria-label={`Acciones de la carpeta ${folder.name}`}>
+            <button type="button" role="menuitem" disabled={busy}
+              onClick={() => { onEdit(); close() }}>Editar</button>
+            <button type="button" role="menuitem" className="danger" disabled={busy}
+              onClick={() => armed ? act(onDelete) : setArmed(true)}>
+              {armed ? 'Confirmar eliminación' : 'Eliminar'}
+            </button>
+            {armed && <button type="button" role="menuitem" disabled={busy} onClick={() => setArmed(false)}>Cancelar</button>}
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -206,13 +299,20 @@ export default function Library() {
   const [query, setQuery] = useState('')
   const [order, setOrder] = useState<'reciente' | 'titulo'>('reciente')
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null)
+  const [folders, setFolders] = useState<Folder[]>([])
+  const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      setBooks(await api.listBooks())
-      setError(null)
-    } catch (err) {
-      setError(`No se pudo cargar la biblioteca: ${errorMessage(err)}`)
+      // la lista de carpetas es secundaria: si falla, la biblioteca sigue usable
+      const [booksRes, foldersRes] = await Promise.allSettled([api.listBooks(), api.listFolders()])
+      if (booksRes.status === 'rejected') {
+        setError(`No se pudo cargar la biblioteca: ${errorMessage(booksRes.reason)}`)
+      } else {
+        setBooks(booksRes.value)
+        setError(null)
+      }
+      setFolders(foldersRes.status === 'fulfilled' ? foldersRes.value : [])
     } finally {
       setLoading(false)
     }
@@ -228,12 +328,28 @@ export default function Library() {
   }, [books])
 
   const visible = useMemo(() => {
+    const inFolder = activeFolderId == null
+      ? books.filter(b => !b.folder_id)
+      : books.filter(b => b.folder_id === activeFolderId)
     const q = query.trim().toLowerCase()
     const filtered = q
-      ? books.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q))
-      : books
+      ? inFolder.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q))
+      : inFolder
     return order === 'titulo' ? [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'es')) : filtered
-  }, [books, query, order])
+  }, [books, query, order, activeFolderId])
+
+  const activeFolder = activeFolderId == null ? null : folders.find(f => f.id === activeFolderId) ?? null
+
+  const moveBook = useCallback(async (bookId: string, folderId: string | null) => {
+    setNotice(null)
+    try {
+      await api.setBookFolder(bookId, folderId)
+      await load()
+    } catch (err) {
+      setNotice(`No se pudo mover el libro: ${errorMessage(err)}`)
+      await load()
+    }
+  }, [load])
 
   const handleFile = async (file: File) => {
     setNotice(null)
@@ -281,6 +397,47 @@ export default function Library() {
       {error && <p role="alert" className="lib-alert">{error}</p>}
       {notice && <p role="alert" className="lib-alert">{notice}</p>}
 
+      <section className="folder-row-wrap" data-testid="folder-row" aria-label="Carpetas">
+        <div className="folder-row">
+          <button type="button" className={`folder-card all ${activeFolderId == null ? 'active' : ''}`}
+            data-testid="folder-card-all"
+            onClick={() => setActiveFolderId(null)}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => {
+              e.preventDefault()
+              const id = e.dataTransfer?.getData('text/book-id') || e.dataTransfer?.getData('text/plain')
+              if (id) void moveBook(id, null)
+            }}>
+            Todos
+          </button>
+          {folders.map(f => (
+            <FolderCard key={f.id} folder={f} active={f.id === activeFolderId}
+              onOpen={() => setActiveFolderId(f.id)}
+              onEdit={() => { /* Task 7: abre FolderDialog */ }}
+              onDelete={async () => {
+                setNotice(null)
+                try {
+                  await api.deleteFolder(f.id)
+                  if (activeFolderId === f.id) setActiveFolderId(null)
+                  await load()
+                } catch (err) {
+                  setNotice(`No se pudo eliminar la carpeta: ${errorMessage(err)}`)
+                }
+              }} />
+          ))}
+          <button type="button" className="folder-card new" data-testid="new-folder"
+            onClick={() => { /* Task 7: abre FolderDialog en modo crear */ }}>+ Nueva carpeta</button>
+        </div>
+      </section>
+
+      {activeFolder && (
+        <div className="folder-view-head">
+          <span className="folder-swatch" style={{ '--folder-color': activeFolder.color } as React.CSSProperties} aria-hidden="true" />
+          <h2>{activeFolder.name}</h2>
+          <button type="button" className="btn" onClick={() => setActiveFolderId(null)}>Volver a todos</button>
+        </div>
+      )}
+
       {continueBook && (
         <section className="continue" data-testid="continue-reading" aria-label="Seguir leyendo">
           <div className="continue-cover"><Cover book={continueBook} /></div>
@@ -297,14 +454,25 @@ export default function Library() {
       {visible.length === 0
         ? (
           <div className="empty-state">
-            <h2>Todavía no tenés libros</h2>
-            <p>Añadí el primero con «Añadir libro» o arrastrando un PDF o EPUB a la zona de subida.</p>
+            {activeFolder
+              ? (
+                <>
+                  <h2>Todavía no hay libros en esta carpeta</h2>
+                  <p>Arrastrá un libro hasta la carpeta o usá el menú del libro para moverlo acá.</p>
+                </>
+              )
+              : (
+                <>
+                  <h2>Todavía no tenés libros</h2>
+                  <p>Añadí el primero con «Añadir libro» o arrastrando un PDF o EPUB a la zona de subida.</p>
+                </>
+              )}
           </div>
         )
         : (
           <div className="grid">
             {visible.map(b => (
-              <BookCard key={b.id} book={b}
+              <BookCard key={b.id} book={b} folders={folders} onMove={moveBook}
                 onReset={async book => {
                   try {
                     await api.resetProgress(book.id)

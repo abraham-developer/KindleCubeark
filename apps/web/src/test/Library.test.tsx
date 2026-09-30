@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import { api, type Book } from '../api'
+import { api, type Book, type Folder } from '../api'
 import { mockApi, stubBrowser } from './mocks'
 import { AuthProvider } from '../state/AuthContext'
 import Library from '../pages/Library'
@@ -33,12 +33,16 @@ function book(over: Partial<Book> & { id: string }): Book {
     total_pages: null,
     file_size: 1_200_000,
     added_at: '2026-09-01T00:00:00Z',
+    folder_id: null,
     percent: null,
     position: null,
     last_read: null,
     ...over,
   }
 }
+
+export const folderA: Folder = { id: 'f1', name: 'Novelas', color: '#ef4444', book_count: 0, created_at: '2026-09-28T00:00:00Z' }
+export const folderB: Folder = { id: 'f2', name: 'Estudio', color: '#3b82f6', book_count: 0, created_at: '2026-09-29T00:00:00Z' }
 
 const books: Book[] = [
   book({ id: 'b1', title: 'Cien años de soledad', author: 'García Márquez', percent: '38', last_read: '2026-09-20T10:00:00Z', position: { cfi: 'x', percent: 0.38, section: 0 } }),
@@ -245,5 +249,118 @@ describe('Library — subida', () => {
     renderLibrary()
     await userEvent.upload(await screen.findByLabelText(/elegir archivo/i), pdfFile)
     expect(await screen.findByRole('alert')).toHaveTextContent(/archivo inválido/i)
+  })
+})
+// folder_id en el factory base (Task 5)
+describe('Library — carpetas', () => {
+  it('muestra las carpetas con su nombre y contador de libros', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([{ ...folderA, book_count: 1 }, folderB]),
+    })))
+    renderLibrary()
+    const row = await screen.findByTestId('folder-row')
+    expect(within(row).getByText('Novelas')).toBeInTheDocument()
+    expect(within(row).getByText('1')).toBeInTheDocument()
+    expect(within(row).getByText('Estudio')).toBeInTheDocument()
+  })
+
+  it('la vista Todos muestra solo libros sin carpeta', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([
+        { ...books[0], folder_id: 'f1' },
+        { ...books[1] }, // sin carpeta
+      ]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+    })))
+    renderLibrary()
+    await screen.findByTestId('book-card-b2')
+    expect(screen.queryByTestId('book-card-b1')).not.toBeInTheDocument()
+  })
+
+  it('clic en una carpeta abre su vista con solo sus libros y botón Volver', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([
+        { ...books[0], folder_id: 'f1' },
+        { ...books[1] },
+      ]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('button', { name: 'Carpeta Novelas' }))
+    expect(await screen.findByTestId('book-card-b1')).toBeInTheDocument()
+    expect(screen.queryByTestId('book-card-b2')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /volver/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /volver/i }))
+    expect(await screen.findByTestId('book-card-b2')).toBeInTheDocument()
+    expect(screen.queryByTestId('book-card-b1')).not.toBeInTheDocument()
+  })
+
+  it('el menú del libro mueve a una carpeta (relevo del drag & drop)', async () => {
+    const setBookFolder = vi.fn().mockResolvedValue(undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      setBookFolder,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId(`book-card-${books[0].id}`)
+    await userEvent.click(within(card).getByRole('button', { name: /opciones de/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /mover a novelas/i }))
+    expect(setBookFolder).toHaveBeenCalledWith(books[0].id, 'f1')
+  })
+
+  it('el menú del libro en carpeta ofrece sacar de la carpeta (folder_id null)', async () => {
+    const setBookFolder = vi.fn().mockResolvedValue(undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([{ ...books[0], folder_id: 'f1' }]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      setBookFolder,
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('button', { name: 'Carpeta Novelas' }))
+    const card = await screen.findByTestId(`book-card-${books[0].id}`)
+    await userEvent.click(within(card).getByRole('button', { name: /opciones de/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /sacar de la carpeta/i }))
+    expect(setBookFolder).toHaveBeenCalledWith(books[0].id, null)
+  })
+
+  it('si el PATCH de mover falla muestra role="alert" y recarga', async () => {
+    const setBookFolder = vi.fn().mockRejectedValue(new Error('Carpeta no encontrada'))
+    const listBooks = vi.fn().mockResolvedValue([{ ...books[0], folder_id: 'f1' }])
+    apiSpies.push(...Object.values(mockApi({
+      listBooks,
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      setBookFolder,
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('button', { name: 'Carpeta Novelas' }))
+    const card = await screen.findByTestId(`book-card-${books[0].id}`)
+    await userEvent.click(within(card).getByRole('button', { name: /opciones de/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /sacar de la carpeta/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no se pudo mover el libro/i)
+    expect(listBooks).toHaveBeenCalledTimes(2) // carga inicial + recarga tras el fallo
+  })
+
+  it('estado vacío de carpeta', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('button', { name: 'Carpeta Novelas' }))
+    expect(await screen.findByText(/no hay libros en esta carpeta/i)).toBeInTheDocument()
+  })
+
+  it('listFolders falló, la biblioteca sigue mostrando los libros', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockRejectedValue(new Error('db caída')),
+    })))
+    renderLibrary()
+    expect(await screen.findByTestId('book-card-b1')).toBeInTheDocument()
+    expect(screen.queryByTestId('folder-card-f1')).not.toBeInTheDocument() // la fila solo con «Todos»
+    expect(screen.getByTestId('folder-card-all')).toBeInTheDocument()
   })
 })
