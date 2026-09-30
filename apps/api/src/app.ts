@@ -11,6 +11,7 @@ import health from './routes/health.js'
 import auth from './routes/auth.js'
 import books from './routes/books.js'
 import annotations from './routes/annotations.js'
+import folders from './routes/folders.js'
 import multipart from '@fastify/multipart'
 
 export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<ReturnType<typeof loadConfig>> } = {}) {
@@ -44,6 +45,7 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
   await app.register(health)
   await app.register(auth)
   await app.register(books)
+  await app.register(folders)
   await app.register(annotations)
   // estático solo en producción (los tests usan skipStatic); si el build web
   // aún no existe, no se registra para no romper el arranque

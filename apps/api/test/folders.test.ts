@@ -2,10 +2,83 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { buildApp } from '../src/app.js'
 import { resetDb } from './helpers/db.js'
+import { registerAndGetCookie } from './helpers/upload.js'
 import { pool } from '../src/db.js'
 
 beforeEach(async () => { await resetDb() })
 afterAll(async () => { await pool.end().catch(() => {}) })
+
+const build = async () => buildApp({ skipStatic: true })
+
+describe('folders API', () => {
+  it('POST crea, normaliza color a minúsculas y GET lista con book_count', async () => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/folders', cookies: { session: cookie },
+      payload: { name: '  Novelas  ', color: '#FF00AA' },
+    })
+    expect(res.statusCode).toBe(201)
+    const folder = res.json()
+    expect(folder.name).toBe('Novelas')
+    expect(folder.color).toBe('#ff00aa')
+    expect(folder.book_count).toBe(0)
+    expect(folder.created_at).toBeTruthy()
+    expect(folder.id).toMatch(/^[0-9a-f-]{36}$/)
+
+    const list = await app.inject({ method: 'GET', url: '/api/folders', cookies: { session: cookie } })
+    expect(list.statusCode).toBe(200)
+    expect(list.json()).toEqual([folder])
+  })
+
+  it('GET no lista carpetas de otro usuario', async () => {
+    const app = await build()
+    const cookieA = await registerAndGetCookie(app, 'a@test.dev')
+    const cookieB = await registerAndGetCookie(app, 'b@test.dev')
+    await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookieA },
+      payload: { name: 'De A', color: '#ff00aa' } })
+
+    const res = await app.inject({ method: 'GET', url: '/api/folders', cookies: { session: cookieB } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual([])
+  })
+
+  it('book_count cuenta los libros de la carpeta', async () => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const folder = (await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookie },
+      payload: { name: 'C', color: '#ff00aa' } })).json()
+    const { rows: [u] } = await pool.query("SELECT id FROM users WHERE email = 'a@test.dev'")
+    await pool.query(
+      `INSERT INTO books (user_id, title, format, file_path, file_size, folder_id)
+       VALUES ($1,'L1','pdf','x/1.pdf',1,$2), ($1,'L2','epub','x/2.epub',1,$2), ($1,'L3','pdf','x/3.pdf',1,NULL)`,
+      [u.id, folder.id],
+    )
+    const list = await app.inject({ method: 'GET', url: '/api/folders', cookies: { session: cookie } })
+    expect(list.json()).toEqual([expect.objectContaining({ id: folder.id, book_count: 2 })])
+  })
+
+  it.each([
+    ['nombre vacío', { name: '   ', color: '#ff00aa' }],
+    ['nombre > 60', { name: 'x'.repeat(61), color: '#ff00aa' }],
+    ['color inválido', { name: 'Ok', color: '#fff' }],
+    ['color no hex', { name: 'Ok', color: 'red' }],
+    ['color con alpha', { name: 'Ok', color: '#ff00aaff' }],
+  ])('400 con %s', async (_label, payload) => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const res = await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookie }, payload })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().message).toBeTruthy()
+  })
+
+  it('401 sin sesión', async () => {
+    const app = await build()
+    const res = await app.inject({ method: 'GET', url: '/api/folders' })
+    expect(res.statusCode).toBe(401)
+  })
+})
 
 describe('esquema de carpetas', () => {
   it('crea la tabla folders y el FK books.folder_id con ON DELETE SET NULL', async () => {
