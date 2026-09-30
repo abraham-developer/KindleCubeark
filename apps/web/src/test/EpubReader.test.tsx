@@ -56,6 +56,7 @@ const epubBook: Book = {
   id: 'bk-epub',
   title: 'Cuentos de la aldea',
   author: 'Luisa Márquez',
+  folder_id: null,
   format: 'epub',
   cover_url: null,
   file_url: '/api/files/bk-epub',

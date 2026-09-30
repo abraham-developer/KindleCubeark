@@ -63,6 +63,7 @@ const NUM_PAGES = 12
 
 const pdfBook: Book = {
   id: 'bk1',
+  folder_id: null,
   title: 'Manual de jardinería',
   author: 'Ana Pérez',
   format: 'pdf',
