@@ -74,6 +74,19 @@ describe('folders API', () => {
     expect(res.json().message).toBeTruthy()
   })
 
+  it.each([
+    ['sin cuerpo', undefined],
+    ['solo name', { name: 'X' }],
+    ['solo color', { color: '#ff00aa' }],
+  ])('400 en POST con %s', async (_label, payload) => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const res = await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookie },
+      ...(payload === undefined ? {} : { payload }) as any })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().message).toBe('El nombre y el color son obligatorios')
+  })
+
   it('401 sin sesión', async () => {
     const app = await build()
     const res = await app.inject({ method: 'GET', url: '/api/folders' })

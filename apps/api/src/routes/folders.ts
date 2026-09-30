@@ -52,6 +52,9 @@ export default async function folderRoutes(app: FastifyInstance) {
   app.post('/api/folders', { preHandler: app.verifySession }, async (req, reply) => {
     const { name, color, error } = validateFolderFields((req.body ?? {}) as Record<string, unknown>)
     if (error) return reply.code(400).send({ message: error })
+    if (name === undefined || color === undefined) {
+      return reply.code(400).send({ message: 'El nombre y el color son obligatorios' })
+    }
     const { rows } = await app.query<FolderRow>(
       `INSERT INTO folders (user_id, name, color) VALUES ($1,$2,$3)
        RETURNING *, 0::int AS book_count`,

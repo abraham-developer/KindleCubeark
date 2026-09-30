@@ -353,15 +353,17 @@ describe('Library — carpetas', () => {
     expect(await screen.findByText(/no hay libros en esta carpeta/i)).toBeInTheDocument()
   })
 
-  it('listFolders falló, la biblioteca sigue mostrando los libros', async () => {
+  it('si listFolders falla: aviso, sin fila de carpetas y TODOS los libros visibles', async () => {
+    // F1: no dejar libros «perdidos» — con carpetas desconocidas se muestra todo
     apiSpies.push(...Object.values(mockApi({
-      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listBooks: vi.fn().mockResolvedValue([{ ...books[0], folder_id: 'f1' }, books[1]]),
       listFolders: vi.fn().mockRejectedValue(new Error('db caída')),
     })))
     renderLibrary()
-    expect(await screen.findByTestId('book-card-b1')).toBeInTheDocument()
-    expect(screen.queryByTestId('folder-card-f1')).not.toBeInTheDocument() // la fila solo con «Todos»
-    expect(screen.getByTestId('folder-card-all')).toBeInTheDocument()
+    expect(await screen.findByTestId('book-card-b1')).toBeInTheDocument() // el de carpeta también
+    expect(screen.getByTestId('book-card-b2')).toBeInTheDocument()
+    expect(screen.queryByTestId('folder-row')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(/no se pudieron cargar las carpetas/i)
   })
 })
 
@@ -490,5 +492,21 @@ describe('Library — drag & drop', () => {
     const card = await screen.findByTestId('folder-card-f1')
     fireEvent.drop(card, { dataTransfer: { getData: () => '', setData: () => {} } } as any)
     expect(setBookFolder).not.toHaveBeenCalled()
+  })
+})
+
+describe('Library — drag & drop: tarjeta Todos resalta', () => {
+  it('dragover sobre Todos agrega drag-over y dragleave lo quita', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([{ ...books[0], folder_id: 'f1' }]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+    })))
+    renderLibrary()
+    const all = await screen.findByTestId('folder-card-all')
+    expect(all.className).not.toContain('drag-over')
+    fireEvent.dragOver(all, { dataTransfer: { getData: () => 'b1', setData: () => {} } } as any)
+    expect(all.className).toContain('drag-over')
+    fireEvent.dragLeave(all)
+    expect(all.className).not.toContain('drag-over')
   })
 })

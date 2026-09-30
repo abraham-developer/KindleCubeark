@@ -308,12 +308,15 @@ export default function Library() {
   const [order, setOrder] = useState<'reciente' | 'titulo'>('reciente')
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null)
   const [folders, setFolders] = useState<Folder[]>([])
+  const [foldersFailed, setFoldersFailed] = useState(false)
+  const [allOver, setAllOver] = useState(false)
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ kind: 'new' } | { kind: 'edit'; folder: Folder } | null>(null)
 
   const load = useCallback(async () => {
     try {
-      // la lista de carpetas es secundaria: si falla, la biblioteca sigue usable
+      // la lista de carpetas es secundaria, pero su fallo no puede
+      // esconder libros: se avisa y se muestran todos (sin filtro de carpeta)
       const [booksRes, foldersRes] = await Promise.allSettled([api.listBooks(), api.listFolders()])
       if (booksRes.status === 'rejected') {
         setError(`No se pudo cargar la biblioteca: ${errorMessage(booksRes.reason)}`)
@@ -321,7 +324,15 @@ export default function Library() {
         setBooks(booksRes.value)
         setError(null)
       }
-      setFolders(foldersRes.status === 'fulfilled' ? foldersRes.value : [])
+      if (foldersRes.status === 'fulfilled') {
+        setFolders(foldersRes.value)
+        setFoldersFailed(false)
+      } else {
+        setFolders([])
+        setFoldersFailed(true)
+        setActiveFolderId(null)
+        setNotice(`No se pudieron cargar las carpetas: ${errorMessage(foldersRes.reason)}`)
+      }
     } finally {
       setLoading(false)
     }
@@ -337,15 +348,17 @@ export default function Library() {
   }, [books])
 
   const visible = useMemo(() => {
-    const inFolder = activeFolderId == null
-      ? books.filter(b => !b.folder_id)
-      : books.filter(b => b.folder_id === activeFolderId)
+    const inFolder = foldersFailed
+      ? books
+      : activeFolderId == null
+        ? books.filter(b => !b.folder_id)
+        : books.filter(b => b.folder_id === activeFolderId)
     const q = query.trim().toLowerCase()
     const filtered = q
       ? inFolder.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q))
       : inFolder
     return order === 'titulo' ? [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'es')) : filtered
-  }, [books, query, order, activeFolderId])
+  }, [books, query, order, activeFolderId, foldersFailed])
 
   const activeFolder = activeFolderId == null ? null : folders.find(f => f.id === activeFolderId) ?? null
 
@@ -406,14 +419,17 @@ export default function Library() {
       {error && <p role="alert" className="lib-alert">{error}</p>}
       {notice && <p role="alert" className="lib-alert">{notice}</p>}
 
+      {/* con carpetas caídas se oculta la fila: sin carpetas conocidas el filtro sería una trampa */}
+      {!foldersFailed && (
       <section className="folder-row-wrap" data-testid="folder-row" aria-label="Carpetas">
         <div className="folder-row">
-          <button type="button" className={`folder-card all ${activeFolderId == null ? 'active' : ''}`}
+          <button type="button" className={`folder-card all ${activeFolderId == null ? 'active' : ''} ${allOver ? 'drag-over' : ''}`}
             data-testid="folder-card-all"
             onClick={() => setActiveFolderId(null)}
-            onDragOver={e => e.preventDefault()}
+            onDragOver={e => { e.preventDefault(); setAllOver(true) }}
+            onDragLeave={() => setAllOver(false)}
             onDrop={e => {
-              e.preventDefault()
+              e.preventDefault(); setAllOver(false)
               const id = e.dataTransfer?.getData('text/book-id') || e.dataTransfer?.getData('text/plain')
               if (id) void moveBook(id, null)
             }}>
@@ -439,6 +455,7 @@ export default function Library() {
             onClick={() => setEditing({ kind: 'new' })}>+ Nueva carpeta</button>
         </div>
       </section>
+      )}
 
       {activeFolder && (
         <div className="folder-view-head">
