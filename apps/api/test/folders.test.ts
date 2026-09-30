@@ -80,6 +80,77 @@ describe('folders API', () => {
   })
 })
 
+describe('folders PATCH y DELETE', () => {
+  async function makeFolder(app: any, cookie: string, name = 'Origen') {
+    return (await app.inject({ method: 'POST', url: '/api/folders', cookies: { session: cookie },
+      payload: { name, color: '#ff00aa' } })).json()
+  }
+
+  it('PATCH renombra y recolorea', async () => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const folder = await makeFolder(app, cookie)
+
+    const res = await app.inject({ method: 'PATCH', url: `/api/folders/${folder.id}`,
+      cookies: { session: cookie }, payload: { name: ' Renombrada ', color: '#ABCDEF' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual(expect.objectContaining({ name: 'Renombrada', color: '#abcdef' }))
+  })
+
+  it('PATCH con un solo campo cambia solo ese campo', async () => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const folder = await makeFolder(app, cookie)
+    const res = await app.inject({ method: 'PATCH', url: `/api/folders/${folder.id}`,
+      cookies: { session: cookie }, payload: { color: '#123456' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual(expect.objectContaining({ name: 'Origen', color: '#123456' }))
+  })
+
+  it('400 si PATCH no manda ni name ni color; 400 con valores inválidos', async () => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const folder = await makeFolder(app, cookie)
+    for (const payload of [{}, { name: '  ' }, { color: 'zzz' }]) {
+      const res = await app.inject({ method: 'PATCH', url: `/api/folders/${folder.id}`,
+        cookies: { session: cookie }, payload })
+      expect(res.statusCode).toBe(400)
+    }
+  })
+
+  it('PATCH y DELETE de carpeta ajena o inexistente → 404', async () => {
+    const app = await build()
+    const cookieA = await registerAndGetCookie(app, 'a@test.dev')
+    const cookieB = await registerAndGetCookie(app, 'b@test.dev')
+    const folder = await makeFolder(app, cookieA)
+
+    const patch = await app.inject({ method: 'PATCH', url: `/api/folders/${folder.id}`,
+      cookies: { session: cookieB }, payload: { name: 'Hack' } })
+    expect(patch.statusCode).toBe(404)
+    const del = await app.inject({ method: 'DELETE', url: `/api/folders/${folder.id}`,
+      cookies: { session: cookieB } })
+    expect(del.statusCode).toBe(404)
+  })
+
+  it('DELETE deja los libros con folder_id NULL', async () => {
+    const app = await build()
+    const cookie = await registerAndGetCookie(app, 'a@test.dev')
+    const folder = await makeFolder(app, cookie)
+    const { rows: [u] } = await pool.query("SELECT id FROM users WHERE email = 'a@test.dev'")
+    const { rows: [book] } = await pool.query(
+      `INSERT INTO books (user_id, title, format, file_path, file_size, folder_id)
+       VALUES ($1,'L','pdf','x/1.pdf',1,$2) RETURNING *`, [u.id, folder.id],
+    )
+
+    const res = await app.inject({ method: 'DELETE', url: `/api/folders/${folder.id}`,
+      cookies: { session: cookie } })
+    expect(res.statusCode).toBe(204)
+
+    const { rows: [after] } = await pool.query('SELECT folder_id FROM books WHERE id = $1', [book.id])
+    expect(after.folder_id).toBeNull()
+  })
+})
+
 describe('esquema de carpetas', () => {
   it('crea la tabla folders y el FK books.folder_id con ON DELETE SET NULL', async () => {
     await buildApp({ skipStatic: true })
