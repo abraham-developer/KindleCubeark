@@ -1,5 +1,5 @@
 // apps/web/src/test/Library.test.tsx — biblioteca: grilla, seguir leyendo, menú, subida (Task 11).
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
@@ -414,5 +414,81 @@ describe('Library — carpetas crear/editar (diálogo)', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: /confirmar/i }))
     expect(deleteFolder).toHaveBeenCalledWith('f1')
     expect(await screen.findByTestId('book-card-b2')).toBeInTheDocument() // recargó, vista Todos
+  })
+})
+
+describe('Library — drag & drop', () => {
+  function bookDropEvent(id: string) {
+    return {
+      dataTransfer: {
+        getData: (type: string) => (type === 'text/book-id' ? id : ''),
+        setData: () => {},
+      },
+    }
+  }
+
+  it('dragstart del libro guarda el id en text/book-id (y text/plain de relevo)', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId(`book-card-${books[0].id}`)
+    const setData = vi.fn()
+    fireEvent.dragStart(card, { dataTransfer: { setData } } as any)
+    expect(setData).toHaveBeenCalledWith('text/book-id', 'b1')
+    expect(setData).toHaveBeenCalledWith('text/plain', 'b1')
+    expect(card.getAttribute('draggable')).toBe('true')
+  })
+
+  it('soltar un libro sobre una carpeta lo mueve (PATCH con folder_id de la carpeta)', async () => {
+    const setBookFolder = vi.fn().mockResolvedValue(undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      setBookFolder,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('folder-card-f1')
+    fireEvent.drop(card, bookDropEvent('b1') as any)
+    expect(setBookFolder).toHaveBeenCalledWith('b1', 'f1')
+  })
+
+  it('soltar sobre la tarjeta Todos saca el libro (folder_id null)', async () => {
+    const setBookFolder = vi.fn().mockResolvedValue(undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([{ ...books[0], folder_id: 'f1' }]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      setBookFolder,
+    })))
+    renderLibrary()
+    const all = await screen.findByTestId('folder-card-all')
+    fireEvent.drop(all, bookDropEvent('b1') as any)
+    expect(setBookFolder).toHaveBeenCalledWith('b1', null)
+  })
+
+  it('resalta la carpeta como zona válida durante dragover', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('folder-card-f1')
+    expect(card.className).not.toContain('drag-over')
+    fireEvent.dragOver(card, bookDropEvent('b1') as any)
+    expect(card.className).toContain('drag-over')
+  })
+
+  it('drop sin id no llama a la API', async () => {
+    const setBookFolder = vi.fn().mockResolvedValue(undefined)
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([folderA]),
+      setBookFolder,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('folder-card-f1')
+    fireEvent.drop(card, { dataTransfer: { getData: () => '', setData: () => {} } } as any)
+    expect(setBookFolder).not.toHaveBeenCalled()
   })
 })

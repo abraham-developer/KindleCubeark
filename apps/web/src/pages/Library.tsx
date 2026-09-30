@@ -121,7 +121,14 @@ function BookCard({ book, folders, onMove, onReset, onDelete }: {
   const size = fileSizeLabel(book.file_size)
 
   return (
-    <article className="book-card" data-testid={`book-card-${book.id}`}>
+    <article className="book-card" data-testid={`book-card-${book.id}`}
+      draggable
+      onDragStart={e => {
+        // HTML5 DnD nativo (desktop); el menú «Mover a…» es el relevo accesible/táctil
+        e.dataTransfer.setData('text/book-id', book.id)
+        e.dataTransfer.setData('text/plain', book.id)
+        e.dataTransfer.effectAllowed = 'move'
+      }}>
       <button type="button" className="book-cover" onClick={open} aria-label={`Abrir ${book.title}`}>
         <Cover book={book} />
       </button>
@@ -416,6 +423,7 @@ export default function Library() {
             <FolderCard key={f.id} folder={f} active={f.id === activeFolderId}
               onOpen={() => setActiveFolderId(f.id)}
               onEdit={() => setEditing({ kind: 'edit', folder: f })}
+              onDropBook={bookId => void moveBook(bookId, f.id)}
               onDelete={async () => {
                 setNotice(null)
                 try {
