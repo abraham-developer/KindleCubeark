@@ -200,6 +200,10 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const [dictNonce, setDictNonce] = useState(0) // reintento manual
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const holdPoint = useRef<{ x: number; y: number } | null>(null)
+  // última posición vista durante la pulsación: si el contenido se desplazó
+  // un poco bajo el dedo (scroll), la palabra se busca donde está el dedo
+  // ahora, no donde empezó hace 550 ms
+  const holdLast = useRef<{ x: number; y: number } | null>(null)
   const dictHoldAt = useRef(0) // la pulsación que abrió el popover no navega
   const dictClosedAt = useRef(0) // el tap que cerró el popover no navega
 
@@ -817,11 +821,16 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const clearHold = () => {
     if (holdTimer.current != null) { clearTimeout(holdTimer.current); holdTimer.current = null }
     holdPoint.current = null
+    holdLast.current = null
   }
 
   const fireHold = (x: number, y: number) => {
     holdTimer.current = null
     holdPoint.current = null
+    const at = holdLast.current ?? { x, y }
+    holdLast.current = null
+    // a mitad de un pellizco el timer es un resto del primer dedo: no abre nada
+    if (pinchRef.current) return
     // las zonas de tap tapan el texto: se transparentan un instante para
     // preguntar la palabra bajo el punto (sin pintar entre medias)
     const stage = stageRef.current
@@ -830,7 +839,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     zones.forEach(z => { z.style.pointerEvents = 'none' })
     let found = null
     try {
-      found = wordRangeAtPoint(x, y)
+      found = wordRangeAtPoint(at.x, at.y)
     } finally {
       zones.forEach((z, i) => { z.style.pointerEvents = prev[i] })
     }
@@ -850,7 +859,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
       /* igual se abre el popover */
     }
     try { navigator.vibrate?.(10) } catch { /* sin vibración */ }
-    setDictReq({ x, y, text: found.text, offset: found.offset })
+    setDictReq({ x: at.x, y: at.y, text: found.text, offset: found.offset })
   }
 
   // Achica el marcado a la palabra hallada (el hanzi compuesto puede caer
@@ -874,15 +883,20 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }
 
   const startHold = (x: number, y: number) => {
+    if (pinchRef.current) return // pellizco en curso: el hold no arranca
     clearHold()
     holdPoint.current = { x, y }
+    holdLast.current = { x, y }
     holdTimer.current = setTimeout(() => fireHold(x, y), HOLD_MS)
   }
 
-  // el dedo tiembla más que el mouse: tolerancias distintas
+  // el dedo tiembla más que el mouse: tolerancias distintas. Cada movimiento
+  // refresca la posición de búsqueda (ver holdLast).
   const cancelHoldOnMove = (x: number, y: number, slop: number) => {
     const p = holdPoint.current
-    if (p && Math.hypot(x - p.x, y - p.y) > slop) clearHold()
+    if (!p) return
+    holdLast.current = { x, y }
+    if (Math.hypot(x - p.x, y - p.y) > slop) clearHold()
   }
 
   const closeDict = useCallback(() => {
@@ -970,6 +984,13 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.changedTouches[0]
     if (t) touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+    // segundo dedo: es un pellizco, no diccionario — cancela la pulsación
+    // pendiente y suelta el popover para que no ancle a coords viejas
+    if (e.touches.length > 1) {
+      clearHold()
+      if (dictReq) closeDict()
+      return
+    }
     // un solo dedo quieto: arranca la pulsación larga del diccionario
     if (e.touches.length === 1 && t && !holdBlocked(e.target as HTMLElement | null)) {
       startHold(t.clientX, t.clientY)
@@ -1075,8 +1096,6 @@ export default function PdfReader({ book, progress, onBack }: Props) {
           <div className="seg" role="group" aria-label="Lupa">
             <button type="button" className="reader-tool" aria-label="Reducir zoom"
               disabled={zoom <= ZOOM_MIN} onClick={zoomOut}>−</button>
-            <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
-              title="Restablecer zoom (0)" onClick={zoomReset}>{Math.round(zoom * 100)}%</button>
             <button type="button" className="reader-tool" aria-label="Aumentar zoom"
               disabled={zoom >= ZOOM_MAX} onClick={zoomIn}>+</button>
           </div>

@@ -14,6 +14,8 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--serif); }
 button { font-family: var(--serif); }
+/* Sin zoom por doble tap ni retardo de tap en botones y enlaces. */
+button, a { touch-action: manipulation; }
 
 .page-center {
   display: flex; align-items: center; justify-content: center;
@@ -612,7 +614,10 @@ button { font-family: var(--serif); }
   touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch;
   display: flex;
 }
-.zoom-scroll .pdf-page { margin: auto; padding: 12px; }
+.zoom-scroll { padding: 12px; }
+/* sin padding en la hoja: desfasa la capa de texto invisible respecto a los
+   glifos y el diccionario agarra la palabra de abajo */
+.zoom-scroll .pdf-page { margin: auto; }
 .zoom-reset {
   position: absolute; z-index: 6; right: 12px; bottom: 12px;
   width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
@@ -623,12 +628,27 @@ button { font-family: var(--serif); }
 .zoom-reset:hover { opacity: 1; }
 .reader-bottom .seg, .reader-subbar .seg, .add-book-row .seg { display: flex; gap: 6px; align-items: center; }
 .add-book-row .seg .reader-tool[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
-.reader-tool.zoom-value { min-width: 52px; }
+/* El × flotante no tapa la barra inferior cuando el chrome está visible. */
+.reader:has(.reader-bottom) .zoom-reset { bottom: 76px; }
 .block-screen .block-prose { font-size: calc(1.12rem * var(--block-zoom, 1)); }
 .block-screen .block-figure { max-width: calc(42rem * var(--block-zoom, 1)); }
 
 @media (max-width: 760px) {
   .block-screen .block-prose { font-size: calc(1.05rem * var(--block-zoom, 1)); }
+}
+
+/* Táctil: objetivos de 44px con aire entre ellos — con botones de ~30px
+   pegados el dedo activa al vecino (modo de vista vs lupa, etc.). */
+@media (pointer: coarse) {
+  .reader-top, .reader-bottom, .reader-subbar { gap: 12px; }
+  .reader-subbar .seg, .reader-bottom .seg { gap: 10px; }
+  .reader-top .reader-tool, .reader-bottom .reader-tool, .reader-subbar .reader-tool,
+  .reader-back { min-width: 44px; min-height: 44px; font-size: .95rem; }
+  .reader-slider { min-height: 44px; }
+  .zoom-reset { width: 48px; height: 48px; right: 16px; bottom: 16px; }
+  .menu-btn { width: 40px; height: 40px; font-size: 1.1rem; }
+  .lib-tabs [role='tab'] { min-height: 44px; }
+  .btn { min-height: 44px; }
 }
 
 /* Responsive: estante compacto en teléfono (2 columnas, lomos más bajos) */

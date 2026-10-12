@@ -477,13 +477,13 @@ describe('PdfReader — lupa', () => {
     // al 100 % no se puede reducir: la lupa solo amplía
     expect(screen.getByRole('button', { name: 'Reducir zoom' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Aumentar zoom' }))
-    expect(await screen.findByText('125%')).toBeInTheDocument()
-    expect(document.querySelector('.zoom-scroll')).not.toBeNull()
+    expect(await until(() => document.querySelector('.zoom-scroll') != null)).toBe(true)
+    expect(screen.queryByText('125%')).not.toBeInTheDocument() // sin porcentaje en controles
     expect(document.querySelector('.zoom-reset')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Página anterior' })).not.toBeInTheDocument()
     // el × vuelve al 100 % con volteo y zonas
     fireEvent.click(screen.getByRole('button', { name: 'Quitar zoom' }))
-    expect(screen.queryByText('125%')).not.toBeInTheDocument()
+    await until(() => document.querySelector('.zoom-scroll') == null)
     expect(document.querySelector('.zoom-reset')).toBeNull()
     expect(screen.getByRole('button', { name: 'Página anterior' })).toBeInTheDocument()
     expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1')
@@ -533,5 +533,38 @@ describe('PdfReader — lupa', () => {
     // el gesto no volteó: sigue en la página 7, con zonas de vuelta
     expect(pages.has(8)).toBe(false)
     expect(screen.getByRole('button', { name: 'Página anterior' })).toBeInTheDocument()
+  })
+
+  it('el pellizco no abre el diccionario (el segundo dedo cancela el hold)', async () => {
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    const textNode = document.createTextNode('jardín con flores')
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    stage.appendChild(textNode)
+    const range = document.createRange()
+    range.setStart(textNode, 2)
+    range.collapse(true)
+    const doc = document as unknown as { caretRangeFromPoint?: unknown }
+    const prev = doc.caretRangeFromPoint
+    doc.caretRangeFromPoint = () => range
+    try {
+      fireEvent.touchStart(stage, {
+        touches: [{ clientX: 100, clientY: 100 }],
+        changedTouches: [{ clientX: 100, clientY: 100 }],
+      })
+      // segundo dedo antes de los 550 ms: cancela la pulsación pendiente
+      fireEvent.touchStart(stage, {
+        touches: [{ clientX: 100, clientY: 100 }, { clientX: 200, clientY: 100 }],
+        changedTouches: [{ clientX: 200, clientY: 100 }],
+      })
+      fireEvent.touchEnd(stage, { touches: [], changedTouches: [{ clientX: 100, clientY: 100 }] })
+      await act(async () => { await realSleep(750) })
+      expect(document.querySelector('.dict-popover')).toBeNull()
+      expect(pages.has(8)).toBe(false)
+    } finally {
+      if (prev === undefined) delete doc.caretRangeFromPoint
+      else doc.caretRangeFromPoint = prev
+      textNode.remove()
+    }
   })
 })

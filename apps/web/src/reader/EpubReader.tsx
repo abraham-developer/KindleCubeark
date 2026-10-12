@@ -563,6 +563,12 @@ export default function EpubReader({ book, progress, onBack }: Props) {
           onClick={guardSwipe(turnNext)} />
       </div>
 
+      {/* Única salida visible de la lupa: × discreto (igual que el lector PDF) */}
+      {settings.fontSize !== FONT_DEFAULT && (
+        <button type="button" className="zoom-reset" aria-label="Quitar zoom" title="Quitar zoom"
+          onClick={zoomReset}>×</button>
+      )}
+
       {chromeVisible && (
         <footer className="reader-bottom epub" role="contentinfo">
           <button type="button" className="reader-tool" aria-expanded={aaOpen}
@@ -573,10 +579,6 @@ export default function EpubReader({ book, progress, onBack }: Props) {
           <div className="seg" role="group" aria-label="Lupa">
             <button type="button" className="reader-tool" aria-label="Reducir zoom"
               disabled={settings.fontSize <= FONT_DEFAULT} onClick={zoomOut}>A−</button>
-            <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
-              title="Restablecer zoom (0)" onClick={zoomReset}>
-              {Math.round((settings.fontSize / FONT_DEFAULT) * 100)}%
-            </button>
             <button type="button" className="reader-tool" aria-label="Aumentar zoom"
               disabled={settings.fontSize >= FONT_MAX} onClick={zoomIn}>A+</button>
           </div>
