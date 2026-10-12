@@ -209,6 +209,21 @@ export default async function bookRoutes(app: FastifyInstance) {
     }
   })
 
+  // cambiar visibilidad de un libro propio (personal <-> global)
+  app.patch('/api/books/:id/visibility', { preHandler: app.verifySession }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { visibility } = (req.body ?? {}) as { visibility?: unknown }
+    if (visibility !== 'personal' && visibility !== 'global') {
+      return reply.code(400).send({ message: 'visibility debe ser personal o global' })
+    }
+    const { rows } = await app.query<BookRow>(
+      'UPDATE books SET visibility = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      [visibility, id, req.user!.id],
+    )
+    if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
+    return toClient(rows[0])
+  })
+
   app.delete('/api/books/:id', { preHandler: app.verifySession }, async (req, reply) => {
     const { id } = req.params as { id: string }
     const { rows } = await app.query<{ file_path: string }>(

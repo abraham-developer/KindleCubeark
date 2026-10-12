@@ -49,12 +49,13 @@ function ProgressBar({ value, className }: { value: number; className?: string }
 }
 
 /** Menú contextual con confirmación en línea para eliminar. */
-function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onDelete }: {
+function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onVisibility, onDelete }: {
   book: Book
   folders: Folder[]
   onContinue: () => void
   onReset: () => Promise<void>
   onMove: (folderId: string | null) => Promise<void>
+  onVisibility: (visibility: Visibility) => Promise<void>
   onDelete: () => Promise<void>
 }) {
   const [open, setOpen] = useState(false)
@@ -95,6 +96,11 @@ function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onDelete }: {
             <button type="button" role="menuitem" disabled={busy}
               onClick={() => act(() => onMove(null))}>Sacar de la carpeta</button>
           )}
+          {book.visibility === 'global'
+            ? <button type="button" role="menuitem" disabled={busy}
+              onClick={() => act(() => onVisibility('personal'))}>Hacer personal</button>
+            : <button type="button" role="menuitem" disabled={busy}
+              onClick={() => act(() => onVisibility('global'))}>Hacer público</button>}
           <button type="button" role="menuitem" className="danger" disabled={busy}
             onClick={() => armed ? act(onDelete) : setArmed(true)}>
             {armed ? 'Confirmar eliminación' : 'Eliminar'}
@@ -176,11 +182,12 @@ function ShelfGrid({ books, renderStand, renderCaption }: {
   )
 }
 
-function MineStand({ book, folders, onMove, onReset, onDelete }: {
+function MineStand({ book, folders, onMove, onReset, onVisibility, onDelete }: {
   book: Book
   folders: Folder[]
   onMove: (bookId: string, folderId: string | null) => Promise<void>
   onReset: (b: Book) => Promise<void>
+  onVisibility: (b: Book, visibility: Visibility) => Promise<void>
   onDelete: (b: Book) => Promise<void>
 }) {
   const navigate = useNavigate()
@@ -200,7 +207,9 @@ function MineStand({ book, folders, onMove, onReset, onDelete }: {
         <span className="spine" aria-hidden="true" />
       </button>
       <ConfirmMenu book={book} folders={folders} onContinue={open} onReset={() => onReset(book)}
-        onMove={folderId => onMove(book.id, folderId)} onDelete={() => onDelete(book)} />
+        onMove={folderId => onMove(book.id, folderId)}
+        onVisibility={visibility => onVisibility(book, visibility)}
+        onDelete={() => onDelete(book)} />
       {book.visibility === 'global' && <span className="badge-global" title="Este libro lo compartes con todos">Global</span>}
     </article>
   )
@@ -535,6 +544,20 @@ export default function Library() {
     }
   }, [load])
 
+  const changeVisibility = useCallback(async (book: Book, visibility: Visibility) => {
+    setNotice(null)
+    try {
+      await api.setBookVisibility(book.id, visibility)
+      setNotice(visibility === 'global'
+        ? `«${book.title}» ahora es público: todos pueden verlo.`
+        : `«${book.title}» ahora es personal: solo tú puedes verlo.`)
+      await load()
+    } catch (err) {
+      setNotice(`No se pudo cambiar la visibilidad: ${errorMessage(err)}`)
+      await load()
+    }
+  }, [load])
+
   const adopt = useCallback(async (book: Book) => {
     setNotice(null)
     setAdopting(book.id)
@@ -716,7 +739,7 @@ export default function Library() {
             : (
               <ShelfGrid books={visible}
                 renderStand={b => (
-                  <MineStand book={b} folders={folders} onMove={moveBook}
+                  <MineStand book={b} folders={folders} onMove={moveBook} onVisibility={changeVisibility}
                     onReset={async book => {
                       try {
                         await api.resetProgress(book.id)

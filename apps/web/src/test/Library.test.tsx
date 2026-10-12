@@ -578,6 +578,53 @@ describe('Library — biblioteca global', () => {
     expect(await screen.findByText(/aún no hay libros globales/i)).toBeInTheDocument()
   })
 
+  it('«Hacer público» publica un libro personal y muestra la insignia', async () => {
+    const setBookVisibility = vi.fn().mockResolvedValue({ ...books[0], visibility: 'global' })
+    const listBooks = vi.fn()
+      .mockResolvedValueOnce(books)
+      .mockResolvedValueOnce([{ ...books[0], visibility: 'global' }, books[1], books[2]])
+    apiSpies.push(...Object.values(mockApi({
+      listBooks,
+      listFolders: vi.fn().mockResolvedValue([]),
+      setBookVisibility,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('book-card-b1')
+    await userEvent.click(within(card).getByRole('button', { name: /opciones/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /hacer público/i }))
+    expect(setBookVisibility).toHaveBeenCalledWith('b1', 'global')
+    expect(await screen.findByText(/ahora es público/i)).toBeInTheDocument()
+    expect(await screen.findByText('Global')).toBeInTheDocument()
+  })
+
+  it('«Hacer personal» reprivatiza un libro global propio', async () => {
+    const setBookVisibility = vi.fn().mockResolvedValue({ ...books[0], visibility: 'personal' })
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([{ ...books[0], visibility: 'global' }]),
+      listFolders: vi.fn().mockResolvedValue([]),
+      setBookVisibility,
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('book-card-b1')
+    await userEvent.click(within(card).getByRole('button', { name: /opciones/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /hacer personal/i }))
+    expect(setBookVisibility).toHaveBeenCalledWith('b1', 'personal')
+    expect(await screen.findByText(/ahora es personal/i)).toBeInTheDocument()
+  })
+
+  it('si falla el cambio de visibilidad muestra el aviso', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([books[0]]),
+      listFolders: vi.fn().mockResolvedValue([]),
+      setBookVisibility: vi.fn().mockRejectedValue(new Error('sin red')),
+    })))
+    renderLibrary()
+    const card = await screen.findByTestId('book-card-b1')
+    await userEvent.click(within(card).getByRole('button', { name: /opciones/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /hacer público/i }))
+    expect(await screen.findByText(/no se pudo cambiar la visibilidad/i)).toBeInTheDocument()
+  })
+
   it('elegir «Para todos» sube el libro como global', async () => {
     const newBook = book({ id: 'b9', title: 'Compartido', format: 'epub' })
     const uploadBook = vi.fn().mockResolvedValue(newBook)

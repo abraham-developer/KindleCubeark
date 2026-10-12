@@ -41,6 +41,7 @@ export const api = {
   updateFolder: (id: string, patch: { name?: string; color?: string }) => request<Folder>(`/folders/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }),
   deleteFolder: (id: string) => request<void>(`/folders/${id}`, { method: 'DELETE' }),
   setBookFolder: (bookId: string, folderId: string | null) => request<Book>(`/books/${bookId}/folder`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ folder_id: folderId }) }),
+  setBookVisibility: (bookId: string, visibility: Visibility) => request<Book>(`/books/${bookId}/visibility`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ visibility }) }),
   listAnnotations: (bookId: string) => request<Annotation[]>(`/books/${bookId}/annotations`),
   createAnnotation: (bookId: string, body: Pick<Annotation, 'kind' | 'position'> & Partial<Pick<Annotation, 'quoted_text' | 'note' | 'color'>>) => request<Annotation>(`/books/${bookId}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   deleteAnnotation: (id: string) => request<void>(`/annotations/${id}`, { method: 'DELETE' }),

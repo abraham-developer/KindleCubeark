@@ -130,6 +130,43 @@ describe('visibilidad global/personal', () => {
     await app.close()
   })
 
+  it('el dueño puede publicar y reprivatizar; otros no pueden', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
+    const cookieA = await registerAndGetCookie(app, 'pub@test.dev')
+    const cookieB = await registerAndGetCookie(app, 'miron@test.dev')
+    const book = await uploadBook(app, cookieA, await makeTestPdf(1, 'Secreto'))
+
+    const pub = await app.inject({
+      method: 'PATCH', url: `/api/books/${book.id}/visibility`, cookies: { session: cookieA },
+      payload: { visibility: 'global' },
+    })
+    expect(pub.statusCode).toBe(200)
+    expect(pub.json().visibility).toBe('global')
+    const global = await app.inject({ method: 'GET', url: '/api/books/global', cookies: { session: cookieB } })
+    expect(global.json().map((b: { id: string }) => b.id)).toContain(book.id)
+
+    const priv = await app.inject({
+      method: 'PATCH', url: `/api/books/${book.id}/visibility`, cookies: { session: cookieA },
+      payload: { visibility: 'personal' },
+    })
+    expect(priv.statusCode).toBe(200)
+    const global2 = await app.inject({ method: 'GET', url: '/api/books/global', cookies: { session: cookieB } })
+    expect(global2.json()).toEqual([])
+
+    // ajeno → 404 (nunca 403); valor inválido → 400
+    const other = await app.inject({
+      method: 'PATCH', url: `/api/books/${book.id}/visibility`, cookies: { session: cookieB },
+      payload: { visibility: 'global' },
+    })
+    expect(other.statusCode).toBe(404)
+    const bad = await app.inject({
+      method: 'PATCH', url: `/api/books/${book.id}/visibility`, cookies: { session: cookieA },
+      payload: { visibility: 'todos' },
+    })
+    expect(bad.statusCode).toBe(400)
+    await app.close()
+  })
+
   it('si el dueño borra el global, las copias adoptadas sobreviven', async () => {
     const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
     const cookieA = await registerAndGetCookie(app, 'borra@test.dev')
