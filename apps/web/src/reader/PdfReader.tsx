@@ -68,10 +68,15 @@ function initialPage(book: Book, progress: ReaderProgress): number {
 }
 
 // ── Lupa / zoom (vista página y vista bloques comparten el nivel) ──────────
+// Solo amplía (100 %–300 %): encoger la página no aportaba nada y confundía.
 const ZOOM_KEY = 'kc.pdf.zoom'
-const ZOOM_MIN = 0.5
+const ZOOM_MIN = 1
 const ZOOM_MAX = 3
 const ZOOM_STEP = 1.25
+
+function clampZoom(value: number): number {
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value))
+}
 
 function loadZoom(): number {
   try {
@@ -88,10 +93,7 @@ function loadZoom(): number {
 
 function stepZoom(current: number, dir: 'in' | 'out'): number {
   const next = dir === 'in' ? current * ZOOM_STEP : current / ZOOM_STEP
-  const rounded = Math.round(next * 100) / 100
-  // caer exacto al 100 % al pasar por él
-  if ((dir === 'in' && current < 1 && rounded >= 1) || (dir === 'out' && current > 1 && rounded <= 1)) return 1
-  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, rounded))
+  return clampZoom(Math.round(next * 100) / 100)
 }
 
 /** Hoja PDF (canvas + texto seleccionable + resaltados), compartida por la
@@ -159,6 +161,11 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const zoomOut = useCallback(() => setZoom(z => stepZoom(z, 'out')), [])
   const zoomReset = useCallback(() => setZoom(1), [])
   const zoomed = zoom !== 1
+  // espejo para los listeners nativos (pellizco), que se suscriben una sola vez
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  const pinchRef = useRef<{ d0: number; z0: number } | null>(null)
+  const pinchedAt = useRef(0)
 
   // ── Vista por bloques (minilecturas estilo Kindle) ───────────────────────
   const [view, setView] = useState<PdfView>(() => loadPdfView())
@@ -762,6 +769,44 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     return () => stage.removeEventListener('wheel', onWheel)
   }, [])
 
+  // ── Lupa por pellizco (dos dedos): el gesto táctil natural ───────────────
+  // Listeners nativos no pasivos: el preventDefault frena el scroll del gesto
+  // y el touch-action del stage/scroll (pan-*) ya desactiva el pinch del
+  // navegador, así que el pellizco es nuestro sin tocar el viewport.
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const dist = (t: { length: number; [i: number]: { clientX: number; clientY: number } }) =>
+      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        pinchRef.current = { d0: dist(e.touches) || 1, z0: zoomRef.current }
+        e.preventDefault()
+      }
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      const p = pinchRef.current
+      if (!p || e.touches.length < 2) return
+      e.preventDefault()
+      setZoom(clampZoom(Math.round((p.z0 * (dist(e.touches) / p.d0)) * 100) / 100))
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!pinchRef.current || e.touches.length >= 2) return
+      pinchRef.current = null
+      pinchedAt.current = Date.now()
+      swipedAt.current = Date.now() // el pellizco no voltea ni abre el chrome
+      setZoom(z => (z <= 1.08 ? 1 : z)) // si quedó apenas arriba, cae al 100 %
+    }
+    stage.addEventListener('touchstart', onTouchStart, { passive: false })
+    stage.addEventListener('touchmove', onTouchMove, { passive: false })
+    stage.addEventListener('touchend', onTouchEnd)
+    return () => {
+      stage.removeEventListener('touchstart', onTouchStart)
+      stage.removeEventListener('touchmove', onTouchMove)
+      stage.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [])
+
   // ── Pulsación larga: diccionario sobre la palabra (dedo o mouse) ─────────
   // Mantener 550 ms quieto marca la palabra en azul y abre su significado;
   // mover cancela (scroll, swipe o selección siguen intactos). Tap corto:
@@ -939,6 +984,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     const start = touchStart.current
     touchStart.current = null
     if (!start) return
+    // recién pellizcado: soltar los dedos no voltea
+    if (Date.now() - pinchedAt.current < 500) return
     // con lupa el gesto horizontal panea el contenido (scroll nativo): no voltea
     if (zoomed) return
     const t = e.changedTouches[0]
@@ -1121,18 +1168,10 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         )}
       </div>
 
-      {/* Barra flotante con lupa: visible aun en inmersivo, con vuelta de hoja */}
+      {/* Única salida visible de la lupa: × discreto (el pellizco inverso también saca) */}
       {zoomed && (
-        <div className="zoom-bar floating" role="toolbar" aria-label="Lupa">
-          <button type="button" className="reader-tool" aria-label="Anterior" onClick={turnPrev}>‹</button>
-          <button type="button" className="reader-tool" aria-label="Reducir zoom"
-            disabled={zoom <= ZOOM_MIN} onClick={zoomOut}>−</button>
-          <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
-            onClick={zoomReset}>{Math.round(zoom * 100)}%</button>
-          <button type="button" className="reader-tool" aria-label="Aumentar zoom"
-            disabled={zoom >= ZOOM_MAX} onClick={zoomIn}>+</button>
-          <button type="button" className="reader-tool" aria-label="Siguiente" onClick={turnNext}>›</button>
-        </div>
+        <button type="button" className="zoom-reset" aria-label="Quitar zoom" title="Quitar zoom"
+          onClick={zoomReset}>×</button>
       )}
 
       {chromeVisible && (

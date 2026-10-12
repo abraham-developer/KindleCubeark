@@ -10,7 +10,7 @@ import { api, type Annotation, type Book, type Position } from '../api'
 import { useProgressSync } from '../lib/progressSync'
 import { splitCfiRange, joinCfiRange, cfiSection } from '../lib/cfiRange'
 import { TopBar, BookmarkButton } from './Chrome'
-import AaPanel, { FONT_DEFAULT, FONT_MAX, FONT_MIN, FONT_STEP, fontFamilyStack, loadSettings, type ReaderSettings } from './AaPanel'
+import AaPanel, { FONT_DEFAULT, FONT_MAX, FONT_STEP, fontFamilyStack, loadSettings, type ReaderSettings } from './AaPanel'
 import SelectionMenu, { HIGHLIGHT_FILL, type HighlightColor } from './SelectionMenu'
 import NoteEditor from './NoteEditor'
 import AnnotationsPanel from './AnnotationsPanel'
@@ -448,11 +448,15 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   }
 
   // ── Lupa EPUB: el zoom es el tamaño de letra (refluye el texto) ─────────
+  // La lupa solo amplía (100 %–178 %): achicar ya vive en el panel Aa.
   const zoomIn = useCallback(() => {
-    setSettings(s => ({ ...s, fontSize: Math.min(FONT_MAX, s.fontSize + FONT_STEP) }))
+    setSettings(s => ({
+      ...s,
+      fontSize: s.fontSize < FONT_DEFAULT ? FONT_DEFAULT : Math.min(FONT_MAX, s.fontSize + FONT_STEP),
+    }))
   }, [])
   const zoomOut = useCallback(() => {
-    setSettings(s => ({ ...s, fontSize: Math.max(FONT_MIN, s.fontSize - FONT_STEP) }))
+    setSettings(s => ({ ...s, fontSize: Math.max(FONT_DEFAULT, s.fontSize - FONT_STEP) }))
   }, [])
   const zoomReset = useCallback(() => {
     setSettings(s => ({ ...s, fontSize: FONT_DEFAULT }))
@@ -568,7 +572,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
           </button>
           <div className="seg" role="group" aria-label="Lupa">
             <button type="button" className="reader-tool" aria-label="Reducir zoom"
-              disabled={settings.fontSize <= FONT_MIN} onClick={zoomOut}>A−</button>
+              disabled={settings.fontSize <= FONT_DEFAULT} onClick={zoomOut}>A−</button>
             <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
               title="Restablecer zoom (0)" onClick={zoomReset}>
               {Math.round((settings.fontSize / FONT_DEFAULT) * 100)}%

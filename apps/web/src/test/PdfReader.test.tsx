@@ -470,21 +470,21 @@ describe('PdfReader — lupa', () => {
   beforeEach(() => { window.localStorage.clear() })
   afterEach(() => { window.localStorage.clear() })
 
-  it('la subbarra cambia el zoom, aparece la flotante y se esconden las zonas', async () => {
+  it('la subbarra cambia el zoom y el × discreto lo quita', async () => {
     renderReader({ position: { page: 7 }, percent: '70' })
     await until(() => pages.has(7))
     fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    // al 100 % no se puede reducir: la lupa solo amplía
+    expect(screen.getByRole('button', { name: 'Reducir zoom' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Aumentar zoom' }))
-    // subbarra + flotante muestran 125 %
-    expect(await screen.findAllByRole('button', { name: 'Restablecer zoom' })).toHaveLength(2)
-    expect(screen.getAllByText('125%')).toHaveLength(2)
-    expect(document.querySelector('.zoom-bar.floating')).not.toBeNull()
+    expect(await screen.findByText('125%')).toBeInTheDocument()
     expect(document.querySelector('.zoom-scroll')).not.toBeNull()
+    expect(document.querySelector('.zoom-reset')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Página anterior' })).not.toBeInTheDocument()
-    // restablecer vuelve al 100 % con volteo y zonas
-    fireEvent.click(screen.getAllByRole('button', { name: 'Restablecer zoom' })[0])
+    // el × vuelve al 100 % con volteo y zonas
+    fireEvent.click(screen.getByRole('button', { name: 'Quitar zoom' }))
     expect(screen.queryByText('125%')).not.toBeInTheDocument()
-    expect(document.querySelector('.zoom-bar.floating')).toBeNull()
+    expect(document.querySelector('.zoom-reset')).toBeNull()
     expect(screen.getByRole('button', { name: 'Página anterior' })).toBeInTheDocument()
     expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1')
   })
@@ -493,14 +493,45 @@ describe('PdfReader — lupa', () => {
     renderReader({ position: { page: 7 }, percent: '70' })
     await until(() => pages.has(7))
     fireEvent.keyDown(window, { key: '+' })
-    expect(await screen.findByText('125%')).toBeInTheDocument()
+    expect(await until(() => document.querySelector('.zoom-scroll') != null)).toBe(true)
     expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1.25')
     fireEvent.keyDown(window, { key: '-' })
-    await until(() => screen.queryByText('125%') == null)
+    await until(() => document.querySelector('.zoom-scroll') == null)
     expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1')
     fireEvent.keyDown(window, { key: '+' })
-    expect(await screen.findByText('125%')).toBeInTheDocument()
+    expect(await until(() => document.querySelector('.zoom-scroll') != null)).toBe(true)
     fireEvent.keyDown(window, { key: '0' })
-    await until(() => screen.queryByText('125%') == null)
+    await until(() => document.querySelector('.zoom-scroll') == null)
+  })
+
+  it('el pellizco con dos dedos amplía y reduce sin voltear la página', async () => {
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    // abrir: 100px → 150px = ×1.5
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 100, clientY: 100 }, { clientX: 200, clientY: 100 }],
+      changedTouches: [{ clientX: 200, clientY: 100 }],
+    })
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 80, clientY: 100 }, { clientX: 230, clientY: 100 }],
+    })
+    fireEvent.touchEnd(stage, { touches: [], changedTouches: [{ clientX: 230, clientY: 100 }] })
+    expect(await until(() => document.querySelector('.zoom-scroll') != null)).toBe(true)
+    expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1.5')
+    // cerrar: 150px → 100px = ×1 exacto (cae al 100 %)
+    fireEvent.touchStart(stage, {
+      touches: [{ clientX: 80, clientY: 100 }, { clientX: 230, clientY: 100 }],
+      changedTouches: [{ clientX: 80, clientY: 100 }],
+    })
+    fireEvent.touchMove(stage, {
+      touches: [{ clientX: 100, clientY: 100 }, { clientX: 200, clientY: 100 }],
+    })
+    fireEvent.touchEnd(stage, { touches: [], changedTouches: [{ clientX: 100, clientY: 100 }] })
+    await until(() => document.querySelector('.zoom-scroll') == null)
+    expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1')
+    // el gesto no volteó: sigue en la página 7, con zonas de vuelta
+    expect(pages.has(8)).toBe(false)
+    expect(screen.getByRole('button', { name: 'Página anterior' })).toBeInTheDocument()
   })
 })

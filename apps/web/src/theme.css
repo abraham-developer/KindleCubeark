@@ -274,6 +274,21 @@ button { font-family: var(--serif); }
   .reader-zone { pointer-events: none; }
 }
 
+/* En táctil no hay selección nativa dentro de la lectura: el dedo que mantiene
+   pulsado abre el diccionario sin pintar/bloquear texto ni chocar con los
+   menús del navegador. En escritorio el texto sigue seleccionable (resaltados
+   por arrastre). El popover del diccionario vive fuera del stage y sí se puede
+   seleccionar/copiar. */
+@media (pointer: coarse) {
+  .reader-stage, .reader-stage .textLayer, .reader-stage .block-prose {
+    user-select: none; -webkit-user-select: none;
+  }
+}
+/* Las barras del lector nunca necesitan selección de texto (ni en desktop). */
+.reader-top, .reader-bottom, .reader-subbar {
+  user-select: none; -webkit-user-select: none;
+}
+
 /* EPUB (Task 13): el contenedor lo pinta epub.js (iframe columnas). */
 .epub-host {
   position: absolute; inset: 0;
@@ -598,15 +613,14 @@ button { font-family: var(--serif); }
   display: flex;
 }
 .zoom-scroll .pdf-page { margin: auto; padding: 12px; }
-.zoom-bar {
-  position: absolute; z-index: 6; display: flex; align-items: center; gap: 6px;
-  padding: 6px 8px; border-radius: 10px;
-  background: var(--paper-raised); border: 1px solid var(--line);
+.zoom-reset {
+  position: absolute; z-index: 6; right: 12px; bottom: 12px;
+  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--line); background: var(--paper-raised); color: var(--ink);
+  font-size: 1.3rem; line-height: 1; opacity: .75;
   box-shadow: 0 4px 14px var(--shadow);
 }
-.zoom-bar.floating { right: 12px; bottom: 12px; }
-.zoom-bar .zoom-value { font-size: .8rem; color: var(--ink-soft); min-width: 44px; text-align: center; }
-.zoom-bar .reader-tool { min-width: 34px; }
+.zoom-reset:hover { opacity: 1; }
 .reader-bottom .seg, .reader-subbar .seg, .add-book-row .seg { display: flex; gap: 6px; align-items: center; }
 .add-book-row .seg .reader-tool[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
 .reader-tool.zoom-value { min-width: 52px; }
