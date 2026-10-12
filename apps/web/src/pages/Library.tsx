@@ -246,7 +246,7 @@ function AddBookControl({ uploading, onFile }: {
         onDragOver={e => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}>
-        Arrastrá un PDF o EPUB acá para agregarlo
+        Arrastra un PDF o EPUB aquí para agregarlo
       </div>
       {uploading && (
         <div className="upload-bar">
@@ -485,13 +485,13 @@ export default function Library() {
               ? (
                 <>
                   <h2>Todavía no hay libros en esta carpeta</h2>
-                  <p>Arrastrá un libro hasta la carpeta o usá el menú del libro para moverlo acá.</p>
+                  <p>Arrastra un libro hasta la carpeta o usa el menú del libro para moverlo aquí.</p>
                 </>
               )
               : (
                 <>
-                  <h2>Todavía no tenés libros</h2>
-                  <p>Añadí el primero con «Añadir libro» o arrastrando un PDF o EPUB a la zona de subida.</p>
+                  <h2>Todavía no tienes libros</h2>
+                  <p>Añade el primero con «Añadir libro» o arrastrando un PDF o EPUB a la zona de subida.</p>
                 </>
               )}
           </div>

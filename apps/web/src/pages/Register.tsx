@@ -17,7 +17,7 @@ export default function Register() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!email.trim() || !password) { setError('Completá email y contraseña'); return }
+    if (!email.trim() || !password) { setError('Completa tu correo electrónico y contraseña'); return }
     setError(null); setBusy(true)
     try {
       await api.register(email.trim(), password)
@@ -31,7 +31,7 @@ export default function Register() {
   }
 
   return (
-    <AuthLayout sub="Empezá a leer en minutos.">
+    <AuthLayout sub="Empieza a leer en minutos.">
       <form onSubmit={onSubmit}>
         <div className="auth-field">
           <label htmlFor="register-email">Email</label>
@@ -46,7 +46,7 @@ export default function Register() {
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button type="submit" className="btn btn-primary" disabled={busy}>Crear cuenta</button>
         <p className="auth-alt">
-          ¿Ya tenés cuenta? <Link to="/login">Iniciá sesión</Link>
+          ¿Ya tienes cuenta? <Link to="/login">Inicia sesión</Link>
         </p>
       </form>
     </AuthLayout>

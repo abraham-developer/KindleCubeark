@@ -74,10 +74,29 @@ describe('progress', () => {
     expect((await patchProgress(app, cookie, pdf.id, { position: { page: 1.5 }, percent: 1 })).statusCode).toBe(400)
     expect((await patchProgress(app, cookie, epub.id, { position: {}, percent: 1 })).statusCode).toBe(400)
     expect((await patchProgress(app, cookie, epub.id, { position: { cfi: '' }, percent: 1 })).statusCode).toBe(400)
+    // bloques: block suelto, fuera de rango o con total inválido también es 400
+    expect((await patchProgress(app, cookie, pdf.id, { position: { page: 1, block: 0 }, percent: 1 })).statusCode).toBe(400)
+    expect((await patchProgress(app, cookie, pdf.id, { position: { page: 1, block: 3, blockCount: 3 }, percent: 1 })).statusCode).toBe(400)
+    expect((await patchProgress(app, cookie, pdf.id, { position: { page: 1, block: -1, blockCount: 3 }, percent: 1 })).statusCode).toBe(400)
+    expect((await patchProgress(app, cookie, pdf.id, { position: { page: 1, block: 0, blockCount: 0 }, percent: 1 })).statusCode).toBe(400)
 
     // nada se escribió para las inválidas
     const { rows } = await pool.query('SELECT COUNT(*) FROM reading_progress')
     expect(Number(rows[0].count)).toBe(0)
+    await app.close()
+  })
+
+  it('PDF acepta posición por bloques {page, block, blockCount}', async () => {
+    const app = await buildApp({ skipStatic: true, config: { dataDir: DATA_DIR } })
+    const cookie = await registerAndGetCookie(app, 'progblock@test.dev')
+    const book = await uploadBook(app, cookie, await makeTestPdf(5, 'Bloques'))
+
+    const res = await patchProgress(app, cookie, book.id, {
+      position: { page: 2, block: 1, blockCount: 3 }, percent: 30,
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().position).toEqual({ page: 2, block: 1, blockCount: 3 })
+    expect(res.json().percent).toBe(30)
     await app.close()
   })
 

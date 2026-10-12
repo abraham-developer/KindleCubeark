@@ -396,3 +396,65 @@ button { font-family: var(--serif); }
 .annotations-danger { color: var(--danger); }
 .annotations-empty, .annotations-error { margin: 0; font-size: .85rem; color: var(--ink-soft); }
 .annotations-error { color: var(--danger); }
+
+/* Subbarra del lector PDF: vista página/bloques + estudio bilingüe */
+.reader-subbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; background: var(--paper-raised);
+  border-bottom: 1px solid var(--line); flex: none;
+}
+.reader-subbar .seg { display: flex; gap: 6px; }
+.reader-subbar .reader-tool[aria-pressed='true'] {
+  border-color: var(--accent); color: var(--accent);
+}
+.reader-select {
+  font-family: var(--serif); background: var(--paper);
+}
+.reader-select:focus { outline: none; border-color: var(--accent); }
+
+/* Vista por bloques: minilectura estilo Kindle (una pantalla por bloque) */
+.block-screen {
+  position: absolute; inset: 0; z-index: 2;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 28px 20px 20px;
+  animation: turn-fade 200ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .block-screen { animation: none; }
+}
+.block-prose {
+  width: 100%; max-width: 42rem;
+  font-size: 1.12rem; line-height: 1.75;
+}
+.block-prose p { margin: 0 0 1em; text-align: justify; }
+.block-pager {
+  margin: auto 0 0; padding-top: 16px;
+  font-size: .8rem; color: var(--ink-soft);
+}
+.block-empty {
+  margin: auto; max-width: 26rem; text-align: center; color: var(--ink-soft);
+  display: flex; flex-direction: column; gap: 12px; align-items: center;
+}
+.block-empty p { margin: 0; }
+
+/* Estudio bilingüe: original y traducción lado a lado (apilado en angosto) */
+.study-split {
+  width: 100%; max-width: 60rem;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--paper-raised); overflow: hidden;
+}
+.study-col { padding: 18px 20px; font-size: 1.02rem; line-height: 1.7; }
+.study-col p { margin: 0 0 1em; }
+.study-col + .study-col { border-left: 1px solid var(--line); }
+.study-head {
+  margin: 0 0 12px; font-size: .78rem; font-weight: 400;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft);
+}
+.study-status { color: var(--ink-soft); }
+.study-error p { color: var(--danger); font-size: .9rem; }
+@media (max-width: 760px) {
+  .study-split { grid-template-columns: 1fr; }
+  .study-col + .study-col { border-left: 0; border-top: 1px solid var(--line); }
+}

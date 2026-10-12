@@ -16,7 +16,7 @@ export default function Login() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!email.trim() || !password) { setError('Completá email y contraseña'); return }
+    if (!email.trim() || !password) { setError('Completa tu correo electrónico y contraseña'); return }
     setError(null); setBusy(true)
     try {
       await signIn(email.trim(), password)
@@ -44,7 +44,7 @@ export default function Login() {
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button type="submit" className="btn btn-primary" disabled={busy}>Entrar</button>
         <p className="auth-alt">
-          ¿No tenés cuenta? <Link to="/register">Creá una</Link>
+          ¿No tienes cuenta? <Link to="/register">Crea una</Link>
         </p>
       </form>
     </AuthLayout>

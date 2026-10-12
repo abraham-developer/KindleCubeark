@@ -59,6 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     databaseUrl: resolveDatabaseUrl(env),
     runMigrations: env.RUN_MIGRATIONS !== 'false',
     webDist: env.WEB_DIST ?? 'web/dist',
+    translateUrl: (env.LIBRETRANSLATE_URL ?? '').replace(/\/+$/, ''),
   }
 }
 export type Config = ReturnType<typeof loadConfig>

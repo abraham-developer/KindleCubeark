@@ -23,11 +23,21 @@ services:
       MAX_UPLOAD_MB: "100"
       SESSION_SECRET: dev-secret-change-me-0123456789abcdef
       NODE_ENV: development
+      # motor del modo estudio bilingüe (solo resuelve si levantas el perfil translate)
+      LIBRETRANSLATE_URL: http://translate:5000
     ports: ["3000:3000"]
     volumes: [bookdata:/data]
     depends_on:
       db:
         condition: service_healthy
+  # LibreTranslate autohospedado (open source, offline): solo se levanta con
+  # `docker compose --profile translate up -d`. Carga únicamente los modelos
+  # de destino del estudio (inglés, alemán y chino) para mantenerse ligero.
+  translate:
+    image: libretranslate/libretranslate
+    profiles: ["translate"]
+    command: --load-only en,de,zh
+    ports: ["5000:5000"]
 volumes:
   dbdata: {}
   bookdata: {}

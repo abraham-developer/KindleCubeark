@@ -135,7 +135,7 @@ describe('Library — grilla', () => {
   it('estado vacío cuando no hay libros', async () => {
     apiSpies.push(...Object.values(mockApi({ listBooks: vi.fn().mockResolvedValue([]) })))
     renderLibrary()
-    expect(await screen.findByText(/todavía no tenés libros/i)).toBeInTheDocument()
+    expect(await screen.findByText(/todavía no tienes libros/i)).toBeInTheDocument()
   })
 })
 

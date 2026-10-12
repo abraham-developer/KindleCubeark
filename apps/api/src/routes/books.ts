@@ -203,13 +203,18 @@ export default async function bookRoutes(app: FastifyInstance) {
     return toClient(updated[0])
   })
 
-  // la posición se valida por formato: PDF → page int ≥ 1 ≤ total_pages (si se conoce);
-  // EPUB → cfi string no vacía (percent/section opcionales)
+  // la posición se valida por formato: PDF → page int ≥ 1 ≤ total_pages (si se conoce),
+  // con block/blockCount opcionales (vista por bloques); EPUB → cfi no vacía.
   function validatePosition(format: string, position: unknown, totalPages: number | null): boolean {
-    const pos = position as { page?: unknown; cfi?: unknown } | null | undefined
+    const pos = position as { page?: unknown; block?: unknown; blockCount?: unknown; cfi?: unknown } | null | undefined
     if (format === 'pdf') {
-      return typeof pos?.page === 'number' && Number.isInteger(pos.page) && pos.page >= 1 &&
-        (totalPages == null || pos.page <= totalPages)
+      if (!(typeof pos?.page === 'number' && Number.isInteger(pos.page) && pos.page >= 1 &&
+        (totalPages == null || pos.page <= totalPages))) return false
+      // sin block/blockCount es la posición clásica de página completa
+      if (pos.block === undefined && pos.blockCount === undefined) return true
+      return typeof pos.block === 'number' && Number.isInteger(pos.block) && pos.block >= 0 &&
+        typeof pos.blockCount === 'number' && Number.isInteger(pos.blockCount) && pos.blockCount >= 1 &&
+        pos.block < pos.blockCount
     }
     return typeof pos?.cfi === 'string' && pos.cfi.length > 0
   }

@@ -39,7 +39,7 @@ describe('Login', () => {
   it('valida campos vacíos', async () => {
     renderWith('/login')
     await userEvent.click(screen.getByRole('button', { name: /entrar/i }))
-    expect(await screen.findByText(/completá email y contraseña/i)).toBeInTheDocument()
+    expect(await screen.findByText(/completa tu correo electrónico y contraseña/i)).toBeInTheDocument()
     const { api } = await import('../api')
     expect(api.login).not.toHaveBeenCalled()
   })
@@ -81,7 +81,7 @@ describe('Login', () => {
 
   it('enlaza al registro', async () => {
     renderWith('/login')
-    await userEvent.click(screen.getByRole('link', { name: /creá una/i }))
+    await userEvent.click(screen.getByRole('link', { name: /crea una/i }))
     expect(await screen.findByRole('button', { name: /crear cuenta/i })).toBeInTheDocument()
   })
 })
@@ -90,7 +90,7 @@ describe('Register', () => {
   it('valida campos vacíos', async () => {
     renderWith('/register')
     await userEvent.click(screen.getByRole('button', { name: /crear cuenta/i }))
-    expect(await screen.findByText(/completá email y contraseña/i)).toBeInTheDocument()
+    expect(await screen.findByText(/completa tu correo electrónico y contraseña/i)).toBeInTheDocument()
     const { api } = await import('../api')
     expect(api.register).not.toHaveBeenCalled()
   })
@@ -115,7 +115,7 @@ describe('Register', () => {
 
   it('enlaza al login', async () => {
     renderWith('/register')
-    await userEvent.click(screen.getByRole('link', { name: /iniciá sesión/i }))
+    await userEvent.click(screen.getByRole('link', { name: /inicia sesión/i }))
     expect(await screen.findByRole('button', { name: /entrar/i })).toBeInTheDocument()
   })
 })

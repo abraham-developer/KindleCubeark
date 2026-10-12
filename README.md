@@ -1,6 +1,6 @@
 # KindleCubeark
 
-Lector web multiusuario para PDF y EPUB, estilo Kindle: subís libros, se parsean
+Lector web multiusuario para PDF y EPUB, estilo Kindle: subes libros, se parsean
 (PDF con pdf-lib, EPUB con adm-zip), se leen en el navegador con retomado
 exacto de posición y anotaciones (resaltados, notas y marcadores por libro).
 
@@ -85,7 +85,7 @@ más largo se trunca silenciosamente a 32. `openssl rand -hex 16` produce
 
 ```sh
 podman build -t kindlecubeark:latest .          # o docker build
-podman tag kindlecubeark:latest kindlecubeark:v1 # etiqueta por release si querés
+podman tag kindlecubeark:latest kindlecubeark:v1 # etiqueta por release si quieres
 ```
 
 > Con podman, `--format docker` preserva el `HEALTHCHECK` del Dockerfile (el
@@ -94,8 +94,8 @@ podman tag kindlecubeark:latest kindlecubeark:v1 # etiqueta por release si quer�
 
 La imagen queda en el almacén local del manager (`deploy/swarm.yml` usa
 `image: kindlecubeark:latest` y el servicio tiene constraint
-`node.role == manager`). Para un swarm multi-nodo, pusheá la imagen a un
-registry y cambiá la línea `image:` de `deploy/swarm.yml`.
+`node.role == manager`). Para un swarm multi-nodo, sube la imagen a un
+registry y cambia la línea `image:` de `deploy/swarm.yml`.
 
 ### 4. DNS
 
@@ -148,3 +148,19 @@ retomado sobre la nueva réplica.
 | `WEB_DIST` | Directorio del build SPA (default `web/dist` relativo al runtime). |
 | `PORT` | Puerto de la API (default `3000`). |
 | `RUN_MIGRATIONS` | `false` para desactivar la migración al arrancar. |
+| `LIBRETRANSLATE_URL` | URL base de LibreTranslate (motor open source autohospedado) para el modo estudio bilingüe. Sin esta variable, el estudio muestra «Traducción no disponible». En dev: `docker compose --profile translate up -d` y `LIBRETRANSLATE_URL=http://localhost:5000` (el compose ya lo apunta al servicio `translate`). |
+
+## Lectura por bloques y estudio bilingüe (PDF)
+
+El lector PDF tiene dos vistas (se cambian en la barra de opciones):
+
+- **Página**: la hoja completa, como antes.
+- **Bloques**: cada página se parte en minilecturas estilo Kindle; el progreso
+  se guarda a nivel de bloque (`{page, block, blockCount}`), así que al
+  reabrir retomas el bloque exacto.
+
+El **estudio bilingüe** es opcional y vive sobre la vista por bloques: parte
+la pantalla en original + traducción (inglés, alemán o chino) para estudiar
+el idioma mientras lees. Traduce con LibreTranslate autohospedado (Argos
+Translate, 100% open source y offline); la app lo usa por `POST
+/api/translate`, que valida sesión y reenvía al motor.
