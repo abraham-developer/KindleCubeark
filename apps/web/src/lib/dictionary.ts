@@ -169,6 +169,7 @@ const CACHE_MAX = 200
 
 export function clearDictionaryCache(): void {
   cache.clear()
+  bothCache.clear()
 }
 
 /** Significado de una palabra: español primero, inglés de respaldo. */
@@ -192,13 +193,15 @@ const HAN_RE = /\p{Script=Han}/u
 const KANA_RE = /[\p{Script=Hiragana}\p{Script=Katakana}]/u
 const WORD_CHAR_RE = /[\p{L}\p{M}\p{N}'’ʼ-]/u
 
+type WordScan = { chars: string[]; startCp: number; endCp: number; candidates: string[] }
+
 /**
- * Palabra(s) candidata(s) en un offset de texto: latina completa, kana
- * corrido, o hasta 2 hanzi (con reintento de 1 si el compuesto no existe).
- * Vacío si el punto cae fuera de palabra.
+ * Escaneo interno: palabra bajo un offset (UTF-16, como el DOM) con índices
+ * en puntos de código. Latinas/kana van completas; hanzi hasta 2 (con
+ * reintento de 1 si el compuesto no existe). Null fuera de palabra.
  */
-export function wordCandidates(text: string, offset: number): string[] {
-  if (!text || offset < 0 || offset >= text.length) return []
+function scanWord(text: string, offset: number): WordScan | null {
+  if (!text || offset < 0 || offset >= text.length) return null
   const chars = Array.from(text)
   let index = 0
   let acc = 0
@@ -212,22 +215,50 @@ export function wordCandidates(text: string, offset: number): string[] {
     const next = chars[index + 1]
     if (next && HAN_RE.test(next)) run.push(next)
     const two = run.join('')
-    return two.length === 2 ? [two, run[0]] : [two]
+    const candidates = two.length === 2 ? [two, run[0]] : [two]
+    return { chars, startCp: index, endCp: index + run.length, candidates }
   }
   if (KANA_RE.test(current)) {
     let start = index
     let end = index
     while (start > 0 && KANA_RE.test(chars[start - 1])) start--
     while (end + 1 < chars.length && KANA_RE.test(chars[end + 1])) end++
-    return [chars.slice(start, end + 1).join('')]
+    return { chars, startCp: start, endCp: end + 1, candidates: [chars.slice(start, end + 1).join('')] }
   }
-  if (!WORD_CHAR_RE.test(current)) return []
+  if (!WORD_CHAR_RE.test(current)) return null
   let start = index
   let end = index
   while (start > 0 && WORD_CHAR_RE.test(chars[start - 1])) start--
   while (end + 1 < chars.length && WORD_CHAR_RE.test(chars[end + 1])) end++
-  const word = chars.slice(start, end + 1).join('').replace(/^['’ʼ-]+|['’ʼ-]+$/g, '')
-  return word ? [word] : []
+  const raw = chars.slice(start, end + 1).join('')
+  // recorte de apóstrofos/guiones en bordes (todos BMP: 1 unidad = 1 punto)
+  const leadCut = raw.match(/^['’ʼ-]+/)?.[0].length ?? 0
+  const trailCut = raw.match(/['’ʼ-]+$/)?.[0].length ?? 0
+  const word = raw.slice(leadCut, raw.length - trailCut)
+  if (!word) return null
+  return { chars, startCp: start + leadCut, endCp: end + 1 - trailCut, candidates: [word] }
+}
+
+/** Palabra(s) candidata(s) en un offset de texto (vacío fuera de palabra). */
+export function wordCandidates(text: string, offset: number): string[] {
+  return scanWord(text, offset)?.candidates ?? []
+}
+
+function cpToUtf16(chars: string[], cp: number): number {
+  return chars.slice(0, cp).join('').length
+}
+
+export type WordSpan = { start: number; end: number; candidates: string[] }
+
+/** Rango UTF-16 (listo para Range/selección) del candidato más largo. */
+export function wordSpan(text: string, offset: number): WordSpan | null {
+  const scan = scanWord(text, offset)
+  if (!scan) return null
+  return {
+    start: cpToUtf16(scan.chars, scan.startCp),
+    end: cpToUtf16(scan.chars, scan.endCp),
+    candidates: scan.candidates,
+  }
 }
 
 /** Significado en un offset de texto (prueba cada candidato en orden). */
@@ -244,28 +275,72 @@ export async function lookupAt(text: string, offset: number, fetchFn: FetchFn = 
   throw lastError
 }
 
-export type PointWord = { text: string; offset: number }
+export type PointRange = { range: Range; text: string; offset: number; candidates: string[] }
 
 /**
- * Texto y offset bajo un punto de la pantalla (caretRangeFromPoint con
- * relevo a caretPositionFromPoint de Firefox). Null si no hay texto.
+ * Rango vivo bajo un punto de la pantalla (caretRangeFromPoint con relevo
+ * a caretPositionFromPoint de Firefox). Null si no hay palabra. El rango
+ * sirve para marcar la palabra en azul con la selección.
  */
-export function wordAtPoint(x: number, y: number): PointWord | null {
+export function wordRangeAtPoint(x: number, y: number): PointRange | null {
   try {
     const doc = document as Document & {
       caretRangeFromPoint?: (x: number, y: number) => Range | null
       caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node | null; offset: number } | null
     }
-    const range = doc.caretRangeFromPoint?.(x, y) ?? null
-    if (range && range.startContainer.nodeType === Node.TEXT_NODE) {
-      return { text: range.startContainer.textContent ?? '', offset: range.startOffset }
+    let range = doc.caretRangeFromPoint?.(x, y) ?? null
+    if (!range) {
+      const pos = doc.caretPositionFromPoint?.(x, y) ?? null
+      if (pos?.offsetNode?.nodeType === Node.TEXT_NODE) {
+        range = document.createRange()
+        range.setStart(pos.offsetNode, pos.offset)
+        range.collapse(true)
+      }
     }
-    const pos = doc.caretPositionFromPoint?.(x, y) ?? null
-    if (pos?.offsetNode?.nodeType === Node.TEXT_NODE) {
-      return { text: pos.offsetNode.textContent ?? '', offset: pos.offset }
-    }
+    if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) return null
+    const text = range.startContainer.textContent ?? ''
+    const offset = range.startOffset
+    const candidates = wordCandidates(text, offset)
+    if (candidates.length === 0) return null
+    return { range, text, offset, candidates }
   } catch {
     /* sin APIs de caret no hay palabra */
   }
   return null
+}
+
+export type BothEntries = { word: string; es: DictEntry | null; en: DictEntry | null }
+
+const bothCache = new Map<string, BothEntries>()
+
+function evictOldest(map: Map<string, unknown>): void {
+  if (map.size > CACHE_MAX) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) map.delete(oldest as string)
+  }
+}
+
+/** Significado en español E inglés (modo estudio bilingüe muestra ambos). */
+async function lookupBoth(word: string, fetchFn: FetchFn): Promise<BothEntries> {
+  const clean = word.trim()
+  const key = clean.toLowerCase()
+  const hit = bothCache.get(key)
+  if (hit) return hit
+  const [es, en] = await Promise.all([lookupSpanish(clean, fetchFn), lookupEnglish(clean, fetchFn)])
+  const result = { word: clean, es, en }
+  bothCache.set(key, result)
+  evictOldest(bothCache)
+  return result
+}
+
+/** Ambos significados en un offset (prueba cada candidato en orden). */
+export async function lookupAtBoth(text: string, offset: number, fetchFn: FetchFn = fetch): Promise<BothEntries> {
+  const candidates = wordCandidates(text, offset)
+  let lastWord = ''
+  for (const candidate of candidates) {
+    const result = await lookupBoth(candidate, fetchFn)
+    if (result.es || result.en) return result
+    lastWord = result.word
+  }
+  throw new DictNotFound(lastWord)
 }

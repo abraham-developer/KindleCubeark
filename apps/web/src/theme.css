@@ -445,7 +445,7 @@ button { font-family: var(--serif); }
   .block-screen { animation: none; }
 }
 .block-prose {
-  width: 100%; max-width: 42rem;
+  width: 100%; max-width: 42rem; flex: none;
   font-size: 1.12rem; line-height: 1.75;
 }
 /* palabras largas (típico en alemán) sin romper el ancho de pantalla */
@@ -465,7 +465,7 @@ button { font-family: var(--serif); }
 
 /* Estudio bilingüe: original y traducción lado a lado (apilado en angosto) */
 .study-split {
-  width: 100%; max-width: 60rem;
+  width: 100%; max-width: 60rem; flex: none;
   display: grid; grid-template-columns: 1fr 1fr; gap: 0;
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--paper-raised); overflow: hidden;
@@ -489,7 +489,7 @@ button { font-family: var(--serif); }
 }
 
 /* Figura de página original dentro de la vista por bloques (ver imágenes) */
-.block-figures { width: 100%; max-width: 42rem; margin: 0 0 12px; }
+.block-figures { width: 100%; max-width: 42rem; flex: none; margin: 0 0 12px; }
 .block-figures-toggle { margin-bottom: 12px; }
 .block-figure { margin: 0 0 12px; }
 .block-figure canvas {
@@ -525,3 +525,7 @@ button { font-family: var(--serif); }
 .dict-example { display: block; font-size: .82rem; font-style: italic; color: var(--ink-soft); }
 .dict-status { margin: 0; font-size: .9rem; color: var(--ink-soft); }
 .dict-error { margin: 0 0 8px; font-size: .9rem; color: var(--danger); }
+.dict-alt { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+
+/* sin destello azul de tap: el lector maneja sus propios gestos */
+.reader-stage, .reader-zone { -webkit-tap-highlight-color: transparent; }

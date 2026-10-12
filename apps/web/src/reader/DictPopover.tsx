@@ -9,13 +9,35 @@ type Props = {
   y: number
   word: string
   entry: DictEntry | null
+  /** Segunda acepción (modo estudio bilingüe: español + inglés). */
+  entry2?: DictEntry | null
   loading: boolean
   error: string | null
   onRetry: () => void
   onClose: () => void
 }
 
-export default function DictPopover({ x, y, word, entry, loading, error, onRetry, onClose }: Props) {
+function langLabel(lang: DictEntry['lang']): string {
+  return lang === 'es' ? 'Español' : 'English'
+}
+
+function EntrySenses({ entry }: { entry: DictEntry }) {
+  return (
+    <>
+      {entry.pos && <p className="dict-pos">{entry.pos}</p>}
+      <ol>
+        {entry.senses.map((sense, i) => (
+          <li key={i}>
+            {sense.definition}
+            {sense.example && <span className="dict-example">«{sense.example}»</span>}
+          </li>
+        ))}
+      </ol>
+    </>
+  )
+}
+
+export default function DictPopover({ x, y, word, entry, entry2, loading, error, onRetry, onClose }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -47,7 +69,8 @@ export default function DictPopover({ x, y, word, entry, loading, error, onRetry
     <div ref={ref} className="dict-popover" style={style} role="dialog" aria-label={`Significado de ${word}`}>
       <div className="dict-head">
         <p className="dict-word">{entry?.word ?? word}</p>
-        {entry && <span className="dict-lang">{entry.lang === 'es' ? 'Español' : 'English'}</span>}
+        {entry && <span className="dict-lang">{langLabel(entry.lang)}</span>}
+        {entry2 && <span className="dict-lang">{langLabel(entry2.lang)}</span>}
         <button type="button" className="dict-close" aria-label="Cerrar diccionario" onClick={onClose}>
           ×
         </button>
@@ -59,18 +82,11 @@ export default function DictPopover({ x, y, word, entry, loading, error, onRetry
           <button type="button" className="reader-tool" onClick={onRetry}>Reintentar</button>
         </>
       )}
-      {entry && (
-        <>
-          {entry.pos && <p className="dict-pos">{entry.pos}</p>}
-          <ol>
-            {entry.senses.map((sense, i) => (
-              <li key={i}>
-                {sense.definition}
-                {sense.example && <span className="dict-example">«{sense.example}»</span>}
-              </li>
-            ))}
-          </ol>
-        </>
+      {entry && <EntrySenses entry={entry} />}
+      {entry2 && (
+        <div className="dict-alt">
+          <EntrySenses entry={entry2} />
+        </div>
       )}
     </div>
   )

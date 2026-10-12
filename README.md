@@ -170,7 +170,9 @@ En la vista por bloques, las páginas con ilustraciones muestran un botón
 bloques.
 
 **Diccionario**: mantén presionada una palabra con el dedo (o con el mouse)
-y aparece su significado en un popover: glosas en español del Wikcionario
-(que cubre palabras extranjeras) con respaldo en inglés. No abre el menú de
-resaltado; para resaltar en táctil selecciona con doble toque y arrastra los
-tiradores como siempre. Requiere internet (consulta directa a Wikimedia).
+y se marca en azul con su significado en un popover: glosas en español del
+Wikcionario (que cubre palabras extranjeras) con respaldo en inglés. No abre
+el menú de resaltado; para resaltar en táctil selecciona con doble toque y
+arrastra los tiradores como siempre. En modo estudio bilingüe muestra ambos
+significados (español + inglés). Requiere internet (consulta directa a
+Wikimedia).

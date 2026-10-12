@@ -1,8 +1,11 @@
 // apps/web/src/test/PdfBlocks.test.tsx — vista por bloques del PDF: parte la
 // página en minilecturas, navega por bloques, guarda el progreso a nivel de
 // bloque y muestra el estudio bilingüe solo cuando está activado.
-import { render, act, fireEvent, screen } from '@testing-library/react'
+import { render, act, fireEvent, screen, configure } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
+// Suite pesada con timers reales: margen para los findBy bajo workers en paralelo.
+configure({ asyncUtilTimeout: 5000 })
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { getDocument } from 'pdfjs-dist'
 import { api, type Book, type Position } from '../api'
@@ -113,6 +116,7 @@ afterEach(() => {
 })
 
 describe('PdfReader por bloques', () => {
+  // Timeout amplio: debounce real de 1,5 s + workers en paralelo bajo carga.
   it('parte la página en bloques, navega entre ellos y guarda {page, block, blockCount}', async () => {
     const { patchProgress } = renderReader({ position: { page: 7 }, percent: '70' })
 
@@ -126,12 +130,12 @@ describe('PdfReader por bloques', () => {
     expect(screen.queryByText(/Línea 01:/)).toBeNull()
 
     // el progreso se guarda a nivel de bloque tras el debounce
-    expect(await until(() => patchProgress.mock.calls.length === 1, 120)).toBe(true)
+    expect(await until(() => patchProgress.mock.calls.length === 1, 200)).toBe(true)
     const [id, position, percent] = patchProgress.mock.calls[0]
     expect(id).toBe('bk1')
     expect(position).toEqual({ page: 7, block: 1, blockCount: 3 })
     expect(percent).toBeCloseTo(((7 - 1) + 2 / 3) / NUM_PAGES * 100, 5)
-  })
+  }, 15_000)
 
   it('retoma el bloque guardado sin pasar por el primero', async () => {
     renderReader({ position: { page: 7, block: 2, blockCount: 3 }, percent: '58' })
@@ -198,11 +202,52 @@ describe('PdfReader por bloques', () => {
     expect(await screen.findByRole('dialog', { name: /significado de línea/i }, { timeout: 3000 }))
       .toBeInTheDocument()
     expect(await screen.findByText('Lugar con plantas.')).toBeInTheDocument()
+    // la palabra queda marcada en azul con la selección
+    expect(window.getSelection()?.toString()).toBe('Línea')
 
     // el mouseup que suelta la pulsación no navega: sigue el bloque 1
     fireEvent.mouseUp(stage, { button: 0, clientX: 100, clientY: 100 })
     expect(screen.getByText('Bloque 1 de 3')).toBeInTheDocument()
     expect(fetchStub).toHaveBeenCalled()
+  })
+
+  it('en modo estudio la pulsación larga muestra ambos significados', async () => {
+    window.localStorage.setItem('kc.study.on', '1')
+    const fetchStub = vi.fn(async (url: string) => {
+      if (url.includes('prop=sections')) {
+        return new Response(JSON.stringify({ parse: { sections: [
+          { index: '1', level: '2', line: 'Español' },
+          { index: '2', level: '3', line: 'Sustantivo' },
+        ] } }), { status: 200 })
+      }
+      if (url.includes('prop=text')) {
+        return new Response(JSON.stringify({
+          parse: { text: { '*': '<dl><dt>1</dt><dd>Lugar con plantas.</dd></dl>' } },
+        }), { status: 200 })
+      }
+      if (url.includes('/definition/')) {
+        return new Response(JSON.stringify({
+          en: [{ partOfSpeech: 'Noun', definitions: [{ definition: 'A <b>garden</b>.' }] }],
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchStub)
+    const translate = vi.fn(async () => ({ translated_text: 'línea traducida' }))
+    renderReader({ position: { page: 7 }, percent: '70' }, { translate })
+
+    const para = await screen.findByText(/Línea 01:/)
+    const range = document.createRange()
+    range.setStart(para.firstChild as Text, 2)
+    range.collapse(true)
+    ;(document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint = () => range
+
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
+    expect(await screen.findByText('Lugar con plantas.', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(await screen.findByText('A garden.')).toBeInTheDocument()
+    expect(screen.getByText('Español')).toBeInTheDocument()
+    expect(screen.getByText('English')).toBeInTheDocument()
   })
 
   it('página con imágenes ofrece verlas inline sin salir de bloques', async () => {

@@ -2,8 +2,8 @@
 // palabra bajo el punto, parseo de Wikcionario (es + en) y caché.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
-  DictNotFound, clearDictionaryCache, lookupAt, lookupWord, parseEnSenses,
-  parseEsSenses, pickSenseSection, stripHtml, wordCandidates,
+  DictNotFound, clearDictionaryCache, lookupAt, lookupAtBoth, lookupWord, parseEnSenses,
+  parseEsSenses, pickSenseSection, stripHtml, wordCandidates, wordSpan,
 } from '../lib/dictionary'
 
 beforeEach(() => {
@@ -115,6 +115,19 @@ describe('wordCandidates', () => {
   })
 })
 
+describe('wordSpan', () => {
+  it('rango UTF-16 de la palabra para marcarla en azul', () => {
+    expect(wordSpan('hola mundo', 2)).toEqual({ start: 0, end: 4, candidates: ['hola'] })
+    expect(wordSpan('el jardín', 4)).toEqual({ start: 3, end: 9, candidates: ['jardín'] })
+    expect(wordSpan('hi there', 2)).toBeNull()
+  })
+
+  it('cuenta bien con astrales antes (emoji = 2 unidades UTF-16)', () => {
+    expect(wordSpan('📚casa', 3)).toEqual({ start: 2, end: 6, candidates: ['casa'] })
+    expect(wordSpan('喝水好', 1)).toEqual({ start: 1, end: 3, candidates: ['水好', '水'] })
+  })
+})
+
 describe('lookupWord', () => {
   it('busca en español y cachea por palabra', async () => {
     const fetchFn = stubFetch(url =>
@@ -163,5 +176,29 @@ describe('lookupAt', () => {
     expect(entry.word).toBe('水')
     expect(entry.lang).toBe('es')
     expect(tried[0]).toBe('水好')
+  })
+})
+
+describe('lookupAtBoth', () => {
+  it('trae español e inglés en paralelo', async () => {
+    const fetchFn = stubFetch(url =>
+      url.includes('prop=sections') ? ES_SECTIONS
+        : url.includes('prop=text') ? { parse: { text: { '*': ES_HTML } } }
+          : url.includes('/definition/') ? EN_PAYLOAD
+            : null)
+    const both = await lookupAtBoth('la casa', 4, fetchFn as never)
+    expect(both.word).toBe('casa')
+    expect(both.es?.senses).toHaveLength(2)
+    expect(both.en?.senses).toEqual([{ definition: 'A house.', example: 'My house.' }])
+  })
+
+  it('con un solo idioma trae ese; sin ninguno lanza DictNotFound', async () => {
+    const onlyEn = stubFetch(url => (url.includes('/definition/') ? EN_PAYLOAD : null))
+    const both = await lookupAtBoth('book', 1, onlyEn as never)
+    expect(both.es).toBeNull()
+    expect(both.en?.lang).toBe('en')
+
+    const none = stubFetch(() => null)
+    await expect(lookupAtBoth('zzzqqq', 1, none as never)).rejects.toThrow(DictNotFound)
   })
 })

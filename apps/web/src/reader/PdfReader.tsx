@@ -21,7 +21,8 @@ import {
   type StudyLang,
 } from '../lib/study'
 import {
-  DictNotFound, lookupAt, wordAtPoint, wordCandidates, type DictEntry,
+  DictNotFound, lookupAt, lookupAtBoth, wordCandidates, wordRangeAtPoint, wordSpan,
+  type DictEntry,
 } from '../lib/dictionary'
 import PageTurn from './PageTurn'
 import { TopBar, BottomBar, BookmarkButton } from './Chrome'
@@ -112,6 +113,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   // ── Diccionario (pulsación larga con el dedo sobre una palabra) ──────────
   const [dictReq, setDictReq] = useState<{ x: number; y: number; text: string; offset: number } | null>(null)
   const [dictEntry, setDictEntry] = useState<DictEntry | null>(null)
+  const [dictEntry2, setDictEntry2] = useState<DictEntry | null>(null) // segundo idioma en estudio
   const [dictLoading, setDictLoading] = useState(false)
   const [dictError, setDictError] = useState<string | null>(null)
   const [dictNonce, setDictNonce] = useState(0) // reintento manual
@@ -411,9 +413,12 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }, [view, page, numPages])
 
   // ── Diccionario: buscar el significado de la palabra pulsada ─────────────
+  // En estudio bilingüe trae ambos (español + inglés); si no, español con
+  // respaldo en inglés. Al resolver ajusta el marcado azul a la palabra hallada.
   useEffect(() => {
     if (!dictReq) {
       setDictEntry(null)
+      setDictEntry2(null)
       setDictLoading(false)
       setDictError(null)
       return
@@ -422,22 +427,34 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     setDictLoading(true)
     setDictError(null)
     setDictEntry(null)
-    lookupAt(dictReq.text, dictReq.offset).then(
-      entry => {
-        if (cancelled) return
-        setDictEntry(entry)
-        setDictLoading(false)
-      },
-      err => {
-        if (cancelled) return
-        setDictLoading(false)
-        setDictError(err instanceof DictNotFound
-          ? 'Sin definición para esta palabra'
-          : `No se pudo consultar el diccionario: ${errorMessage(err)}`)
-      },
-    )
+    setDictEntry2(null)
+    const done = (word: string, first: DictEntry | null, second: DictEntry | null) => {
+      if (cancelled) return
+      setDictEntry(first)
+      setDictEntry2(second)
+      setDictLoading(false)
+      adjustDictSelection(dictReq.text, dictReq.offset, word)
+    }
+    const failed = (err: unknown) => {
+      if (cancelled) return
+      setDictLoading(false)
+      setDictError(err instanceof DictNotFound
+        ? 'Sin definición para esta palabra'
+        : `No se pudo consultar el diccionario: ${errorMessage(err)}`)
+    }
+    if (studyOn) {
+      lookupAtBoth(dictReq.text, dictReq.offset).then(
+        ({ word, es, en }) => done(word, es ?? en, es && en ? en : null),
+        failed,
+      )
+    } else {
+      lookupAt(dictReq.text, dictReq.offset).then(
+        entry => done(entry.word, entry, null),
+        failed,
+      )
+    }
     return () => { cancelled = true }
-  }, [dictReq, dictNonce])
+  }, [dictReq, dictNonce, studyOn])
 
   // El timer de pulsación larga no sobrevive al desmonte del lector.
   useEffect(() => () => {
@@ -634,11 +651,11 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }, [])
 
   // ── Pulsación larga: diccionario sobre la palabra (dedo o mouse) ─────────
-  // Mantener 550 ms quieto abre el significado; mover cancela (scroll,
-  // swipe o selección siguen intactos). La pulsación que abre —y el tap
-  // que cierra— no navegan ni abren el menú de resaltado.
+  // Mantener 550 ms quieto marca la palabra en azul y abre su significado;
+  // mover cancela (scroll, swipe o selección siguen intactos). Tap corto:
+  // controles o vuelta de página, como siempre. La pulsación que abre —y el
+  // tap que cierra— no navegan ni abren el menú de resaltado.
   const HOLD_MS = 550
-  const HOLD_SLOP = 12
 
   const clearHold = () => {
     if (holdTimer.current != null) { clearTimeout(holdTimer.current); holdTimer.current = null }
@@ -656,15 +673,47 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     zones.forEach(z => { z.style.pointerEvents = 'none' })
     let found = null
     try {
-      found = wordAtPoint(x, y)
+      found = wordRangeAtPoint(x, y)
     } finally {
       zones.forEach((z, i) => { z.style.pointerEvents = prev[i] })
     }
-    if (!found || wordCandidates(found.text, found.offset).length === 0) return
+    if (!found) return
+    const span = wordSpan(found.text, found.offset)
+    if (!span) return
     dictHoldAt.current = Date.now()
-    window.getSelection()?.removeAllRanges() // que no abra el menú de resaltado
+    // marca azul exacta sobre la palabra (reemplaza la selección nativa)
+    try {
+      const node = found.range.startContainer
+      found.range.setStart(node, span.start)
+      found.range.setEnd(node, span.end)
+      const sel = window.getSelection()
+      sel?.removeAllRanges()
+      sel?.addRange(found.range)
+    } catch {
+      /* igual se abre el popover */
+    }
     try { navigator.vibrate?.(10) } catch { /* sin vibración */ }
     setDictReq({ x, y, text: found.text, offset: found.offset })
+  }
+
+  // Achica el marcado a la palabra hallada (el hanzi compuesto puede caer
+  // al simple). Solo toca la selección si sigue siendo la del diccionario.
+  const adjustDictSelection = (text: string, offset: number, word: string) => {
+    try {
+      const sel = window.getSelection()
+      if (!sel || sel.rangeCount === 0) return
+      const span = wordSpan(text, offset)
+      if (!span) return
+      const range = sel.getRangeAt(0)
+      const node = range.startContainer
+      if (node.nodeType !== Node.TEXT_NODE || node.textContent !== text) return
+      range.setStart(node, span.start)
+      range.setEnd(node, span.start + word.length)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    } catch {
+      /* el marcado aproximado igual sirve */
+    }
   }
 
   const startHold = (x: number, y: number) => {
@@ -673,14 +722,16 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     holdTimer.current = setTimeout(() => fireHold(x, y), HOLD_MS)
   }
 
-  const cancelHoldOnMove = (x: number, y: number) => {
+  // el dedo tiembla más que el mouse: tolerancias distintas
+  const cancelHoldOnMove = (x: number, y: number, slop: number) => {
     const p = holdPoint.current
-    if (p && Math.hypot(x - p.x, y - p.y) > HOLD_SLOP) clearHold()
+    if (p && Math.hypot(x - p.x, y - p.y) > slop) clearHold()
   }
 
   const closeDict = useCallback(() => {
     dictClosedAt.current = Date.now()
     setDictReq(null)
+    window.getSelection()?.removeAllRanges() // se lleva el marcado azul
   }, [])
 
   const dictBusy = () => Date.now() - dictHoldAt.current < 1200 || Date.now() - dictClosedAt.current < 400
@@ -699,7 +750,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     startHold(e.clientX, e.clientY)
   }
 
-  const onStageMouseMove = (e: React.MouseEvent) => cancelHoldOnMove(e.clientX, e.clientY)
+  const onStageMouseMove = (e: React.MouseEvent) => cancelHoldOnMove(e.clientX, e.clientY, 10)
 
   const onStageMouseUp = (e: React.MouseEvent) => {
     if (e.button !== 0) return
@@ -769,7 +820,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }
   const onTouchMove = (e: React.TouchEvent) => {
     const t = e.touches[0]
-    if (t) cancelHoldOnMove(t.clientX, t.clientY)
+    if (t) cancelHoldOnMove(t.clientX, t.clientY, 24)
   }
   const onTouchEnd = (e: React.TouchEvent) => {
     clearHold()
@@ -1009,6 +1060,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
           y={dictReq.y}
           word={wordCandidates(dictReq.text, dictReq.offset)[0] ?? ''}
           entry={dictEntry}
+          entry2={dictEntry2}
           loading={dictLoading}
           error={dictError}
           onRetry={() => setDictNonce(n => n + 1)}
