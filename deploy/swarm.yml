@@ -93,15 +93,19 @@ services:
         max_attempts: 3
 
   # LibreTranslate autohospedado (open source, offline): motor del modo
-  # estudio bilingüe. Solo en la red interna (sin puertos publicados):
-  # únicamente el app le pega por http://translate:5000. Carga solo
-  # inglés, español, alemán y chino (el español es el origen típico).
-  # Nota: el primer arranque descarga los modelos (~minutos).
+  # estudio bilingüe. Sin puertos publicados y sin labels de traefik
+  # (traefik no lo rutea): únicamente el app le pega por
+  # http://translate:5000. Va también en `admin` porque el primer
+  # arranque descarga los modelos de internet y la red `internal` no
+  # tiene salida (sin esto falla con «Temporary failure in name
+  # resolution»). Carga solo inglés, español, alemán y chino.
+  # Nota: el primer arranque tarda minutos en descargar los modelos.
   translate:
     image: libretranslate/libretranslate
     command: --load-only en,es,de,zh
     networks:
       - internal
+      - admin
     deploy:
       replicas: 1
       placement:
