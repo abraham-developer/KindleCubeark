@@ -13,9 +13,11 @@ import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { api, ApiError, type Annotation, type Book, type Position } from '../api'
 import { useProgressSync } from '../lib/progressSync'
 import {
-  blockPercent, initialBlock, loadPdfView, pageItemsToBlocks, savePdfView,
-  type PdfTextItem, type PdfView,
+  blockPercent, buildContentBlocks, initialBlock, itemsToSpans, loadPdfView, resumeBlockFace,
+  savePdfView, studyScreenPosition,
+  type BlockFace, type ContentBlock, type PdfTextItem, type PdfView,
 } from '../lib/blocks'
+import { extractPageImages, type ImageOps } from '../lib/pageImages'
 import {
   STUDY_LANGS, loadStudyPrefs, saveStudyPrefs, studyLangLabel, translateBlock,
   type StudyLang,
@@ -89,26 +91,25 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const [view, setView] = useState<PdfView>(() => loadPdfView())
   // el bloque guardado se sanea contra el total real al extraer cada página
   const [block, setBlock] = useState(() => initialBlock(progress?.position, Number.MAX_SAFE_INTEGER))
-  const [pageBlocks, setPageBlocks] = useState<string[][] | null>(null) // null = extrayendo
+  // null = extrayendo; cada bloque es texto refluido o imagen en hoja propia
+  const [pageBlocks, setPageBlocks] = useState<ContentBlock[] | null>(null)
   const [blocksError, setBlocksError] = useState<string | null>(null)
-  const blocksCache = useRef(new Map<number, string[][]>())
+  const blocksCache = useRef(new Map<number, ContentBlock[]>())
   const extractToken = useRef(0)
   // al retroceder de página en vista bloques se cae al ÚLTIMO bloque nuevo
   const pendingEdge = useRef<'last' | null>(null)
 
   // ── Modo estudio bilingüe (opcional; vive sobre la vista por bloques) ────
+  // Intercala pantallas: original, traducción, original… (una por pantalla).
   const [studyOn, setStudyOn] = useState(() => loadStudyPrefs().on)
   const [studyLang, setStudyLang] = useState<StudyLang>(() => loadStudyPrefs().lang)
+  const [face, setFace] = useState<BlockFace>('orig')
+  const resumedRef = useRef(false) // el retomado se aplica una sola vez
   const [translation, setTranslation] = useState<string | null>(null)
   const [translating, setTranslating] = useState(false)
   const [transError, setTransError] = useState<string | null>(null)
   const [transNonce, setTransNonce] = useState(0) // reintento manual
   const transToken = useRef(0)
-
-  // ── Imágenes en vista bloques (conteo + figura expandible) ───────────────
-  const [imgCount, setImgCount] = useState<number | null>(null) // null = sin escanear
-  const [showFigures, setShowFigures] = useState(false)
-  const imgCache = useRef(new Map<number, number>())
 
   // ── Diccionario (pulsación larga con el dedo sobre una palabra) ──────────
   const [dictReq, setDictReq] = useState<{ x: number; y: number; text: string; offset: number } | null>(null)
@@ -143,8 +144,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   // tests el render es fake y puede venir sin cancel().)
   const renderTaskRef = useRef<{ cancel?(): void; promise: Promise<unknown> } | null>(null)
   const renderToken = useRef(0)
-  // última posición guardada («página» o «página:bloque»): la inicial no repite el guardado
-  const lastSaved = useRef<string>(view === 'blocks' ? `${page}:${block}` : `${page}`)
+  // última posición guardada («página» o «página:bloque:cara»): la inicial no repite el guardado
+  const lastSaved = useRef<string>(view === 'blocks' ? `${page}:${block}:orig` : `${page}`)
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
   const swipedAt = useRef(0)
 
@@ -254,9 +255,32 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     }
   }, [page, fit, size, numPages, view])
 
+  // Fija bloque y cara tras extraer: retomado guardado (una sola vez),
+  // borde pendiente al retroceder de página, o saneo contra el total real.
+  const settleBlockFace = (blocks: ContentBlock[]) => {
+    const len = blocks.length
+    const edge = pendingEdge.current
+    pendingEdge.current = null
+    const savedPage = progress?.position && 'page' in progress.position ? progress.position.page : null
+    if (!resumedRef.current && savedPage != null && savedPage === page) {
+      resumedRef.current = true
+      const mapped = resumeBlockFace(progress?.position, blocks, studyOn)
+      setBlock(mapped.block)
+      setFace(mapped.face)
+      return
+    }
+    if (edge === 'last') {
+      setBlock(Math.max(0, len - 1))
+      setFace(studyOn && blocks[len - 1]?.kind === 'text' ? 'trans' : 'orig')
+      return
+    }
+    setBlock(b => initialBlock({ block: b }, len))
+  }
+
   // ── Extracción de bloques de la página activa (solo vista bloques) ──────
-  // getTextContent es barato frente al render: se cachea por página y el
-  // bloque actual se sanea contra el total real (el guardado puede excederlo).
+  // Texto por posición + imágenes recortadas del render, intercalados en
+  // orden de lectura. Se cachea por página; si las imágenes fallan, igual
+  // se muestra el texto (nunca tumban la página).
   useEffect(() => {
     if (view !== 'blocks' || !numPages) return
     const doc = docRef.current
@@ -265,14 +289,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     if (cached) {
       setBlocksError(null)
       setPageBlocks(cached)
-      setBlock(b => {
-        if (pendingEdge.current === 'last') {
-          pendingEdge.current = null
-          return Math.max(0, cached.length - 1)
-        }
-        pendingEdge.current = null
-        return initialBlock({ block: b }, cached.length)
-      })
+      settleBlockFace(cached)
       return
     }
     const token = ++extractToken.current
@@ -287,17 +304,14 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         if (cancelled || token !== extractToken.current) return
         const items = (content.items as unknown as Array<Partial<PdfTextItem>>)
           .filter((it): it is PdfTextItem => typeof it.str === 'string' && Array.isArray(it.transform))
-        const blocks = pageItemsToBlocks(items)
+        const spans = itemsToSpans(items)
+        const ops = (pdfjs as unknown as { OPS?: ImageOps }).OPS
+        const images = await extractPageImages(pdfPage, ops).catch(() => [])
+        if (cancelled || token !== extractToken.current) return
+        const blocks = buildContentBlocks(spans, images)
         blocksCache.current.set(page, blocks)
         setPageBlocks(blocks)
-        setBlock(b => {
-          if (pendingEdge.current === 'last') {
-            pendingEdge.current = null
-            return Math.max(0, blocks.length - 1)
-          }
-          pendingEdge.current = null
-          return initialBlock({ block: b }, blocks.length)
-        })
+        settleBlockFace(blocks)
         pdfPage.cleanup?.()
       } catch {
         if (!cancelled && token === extractToken.current) {
@@ -307,7 +321,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
       }
     })()
     return () => { cancelled = true }
-  }, [view, page, numPages])
+    // settleBlockFace lee el estado vigente; studyOn re-evalúa el retomado.
+  }, [view, page, numPages, studyOn])
 
   // ── Anotaciones del libro (una sola descarga; el POST/borrado actualiza) ──
   useEffect(() => {
@@ -327,29 +342,36 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     a.color === 'bookmark' && typeof a.position?.page === 'number' && a.position.page === page)
 
   // Progreso: en vista página guardo {page} (contrato clásico); en vista
-  // bloques guardo {page, block, blockCount} con porcentaje a nivel bloque
+  // bloques guardo {page, block, blockCount} y en estudio sumo la cara.
+  // El porcentaje reparte la página entre pantallas (las imágenes no duplican).
   useEffect(() => {
     if (!numPages) return
     if (view === 'blocks' && !pageBlocks) return // extrayendo: aún no hay total real
-    const key = view === 'blocks' ? `${page}:${block}` : `${page}`
+    const key = view === 'blocks' ? `${page}:${block}:${face}` : `${page}`
     if (key === lastSaved.current) return
     lastSaved.current = key
     if (view === 'blocks' && pageBlocks) {
       const count = Math.max(pageBlocks.length, 1)
-      sync.save({ page, block, blockCount: count }, blockPercent(page, block, count, numPages))
+      if (studyOn) {
+        const { index, total } = studyScreenPosition(pageBlocks, block, face, true)
+        sync.save({ page, block, blockCount: count, face }, blockPercent(page, index, total, numPages))
+      } else {
+        sync.save({ page, block, blockCount: count }, blockPercent(page, block, count, numPages))
+      }
     } else {
       sync.save({ page }, (page / numPages) * 100)
     }
-  }, [page, block, pageBlocks, view, numPages, sync])
+  }, [page, block, face, pageBlocks, view, numPages, studyOn, sync])
 
   // ── Estudio bilingüe: traducir el bloque en lectura (solo si está activo) ─
   useEffect(() => {
     saveStudyPrefs({ on: studyOn, lang: studyLang })
   }, [studyOn, studyLang])
 
-  const blockText = view === 'blocks' && pageBlocks && pageBlocks[block]
-    ? pageBlocks[block].join('\n\n')
-    : ''
+  const activeBlock = view === 'blocks' && pageBlocks && pageBlocks.length > 0
+    ? pageBlocks[Math.min(block, pageBlocks.length - 1)]
+    : null
+  const blockText = activeBlock?.kind === 'text' ? activeBlock.paragraphs.join('\n\n') : ''
 
   useEffect(() => {
     if (!studyOn || view !== 'blocks' || !blockText) {
@@ -375,42 +397,6 @@ export default function PdfReader({ book, progress, onBack }: Props) {
       },
     )
   }, [studyOn, view, blockText, studyLang, transNonce])
-
-  // ── Conteo de imágenes de la página (solo vista bloques, cacheado) ──────
-  // Escanea la lista de operadores buscando pintados de imagen; la misma
-  // imagen repetida (logo, fondo) cuenta una sola vez por nombre de XObject.
-  useEffect(() => {
-    if (view !== 'blocks' || !numPages) return
-    const doc = docRef.current
-    if (!doc) return
-    const cached = imgCache.current.get(page)
-    if (cached !== undefined) { setImgCount(cached); return }
-    const paintImageOp = (pdfjs as unknown as { OPS?: { paintImageXObject?: unknown } })
-      .OPS?.paintImageXObject
-    if (paintImageOp === undefined) { setImgCount(0); return } // pdfjs mockeado sin OPS
-    let cancelled = false
-    setImgCount(null)
-    void (async () => {
-      try {
-        const pdfPage = await doc.getPage(page)
-        const getOpList = (pdfPage as unknown as {
-          getOperatorList?: () => Promise<{ fnArray: unknown[]; argsArray: Array<ArrayLike<unknown>> }>
-        }).getOperatorList
-        if (!getOpList) { if (!cancelled) setImgCount(0); return }
-        const opList = await getOpList.call(pdfPage)
-        if (cancelled) return
-        const names = new Set<unknown>()
-        opList.fnArray.forEach((fn, i) => {
-          if (fn === paintImageOp) names.add(opList.argsArray[i]?.[0] ?? i)
-        })
-        imgCache.current.set(page, names.size)
-        setImgCount(names.size)
-      } catch {
-        if (!cancelled) setImgCount(0)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [view, page, numPages])
 
   // ── Diccionario: buscar el significado de la palabra pulsada ─────────────
   // En estudio bilingüe trae ambos (español + inglés); si no, español con
@@ -462,13 +448,12 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }, [])
 
   // Un cambio de página/bloque invalida el menú/editor, la selección
-  // pendiente, el diccionario y las figuras expandidas
+  // pendiente y el diccionario
   useEffect(() => {
     setMenu(null)
     setNoteDraft(null)
     selectionRef.current = null
     setDictReq(null)
-    setShowFigures(false)
     window.getSelection()?.removeAllRanges()
   }, [page, block])
 
@@ -549,30 +534,45 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     }
   }
 
-  // ── Vuelta de página (en vista bloques avanza por bloques) ──────────────
+  // ── Vuelta de página (bloques: por bloques; estudio: intercalado) ────────
+  // En estudio los bloques de texto ocupan dos pantallas (original y
+  // traducción); las imágenes, una sola (se saltan la cara traducida).
   const turnNext = useCallback(() => {
     if (view === 'blocks' && pageBlocks && pageBlocks.length > 0) {
+      if (studyOn && face === 'orig' && pageBlocks[block]?.kind === 'text') {
+        setDirection('next')
+        setFace('trans')
+        return
+      }
       if (block < pageBlocks.length - 1) {
         setDirection('next')
         setBlock(block + 1)
+        setFace('orig')
         return
       }
       if (page >= numPages) return
       setDirection('next')
       setBlock(0)
+      setFace('orig')
       setPage(page + 1)
       return
     }
     if (page >= numPages) return
     setDirection('next')
     setPage(page + 1)
-  }, [page, numPages, view, block, pageBlocks])
+  }, [page, numPages, view, block, face, studyOn, pageBlocks])
 
   const turnPrev = useCallback(() => {
     if (view === 'blocks' && pageBlocks && pageBlocks.length > 0) {
+      if (studyOn && face === 'trans') {
+        setDirection('prev')
+        setFace('orig')
+        return
+      }
       if (block > 0) {
         setDirection('prev')
         setBlock(block - 1)
+        setFace(studyOn && pageBlocks[block - 1]?.kind === 'text' ? 'trans' : 'orig')
         return
       }
       if (page <= 1) return
@@ -584,17 +584,21 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     if (page <= 1) return
     setDirection('prev')
     setPage(page - 1)
-  }, [page, numPages, view, block, pageBlocks])
+  }, [page, numPages, view, block, face, studyOn, pageBlocks])
 
   const jumpTo = useCallback((target: number, targetBlock = 0) => {
     const t = Math.max(1, Math.min(Math.round(target), numPages || target))
     pendingEdge.current = null
     if (t === page) {
-      if (view === 'blocks') setBlock(Math.max(0, targetBlock))
+      if (view === 'blocks') {
+        setBlock(Math.max(0, targetBlock))
+        setFace('orig')
+      }
       return
     }
     setDirection(t > page ? 'next' : 'prev')
     setBlock(Math.max(0, targetBlock))
+    setFace('orig')
     setPage(t)
   }, [page, numPages, view])
 
@@ -606,6 +610,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const toggleStudy = useCallback(() => {
     const next = !studyOn
     setStudyOn(next)
+    setFace('orig') // al cambiar de modo se cae al original del bloque actual
     if (next) setViewAndPersist('blocks') // el estudio vive sobre los bloques
   }, [studyOn, setViewAndPersist])
 
@@ -854,22 +859,32 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   }
 
   const blockCount = view === 'blocks' && pageBlocks ? pageBlocks.length : 0
+  const blockTag = blockCount > 0
+    ? (activeBlock?.kind === 'image'
+      ? ' · imagen'
+      : studyOn ? (face === 'trans' ? ' · traducción' : ' · original') : '')
+    : ''
   const percent = numPages
-    ? (view === 'blocks' && blockCount > 0
-      ? blockPercent(page, block, blockCount, numPages)
+    ? (view === 'blocks' && pageBlocks && blockCount > 0
+      ? (() => {
+        const { index, total } = studyScreenPosition(pageBlocks, block, face, studyOn)
+        return blockPercent(page, index, total, numPages)
+      })()
       : (page / numPages) * 100)
     : 0
   const label = numPages
     ? (view === 'blocks' && blockCount > 0
-      ? `pág. ${page} de ${numPages} · bloque ${block + 1} de ${blockCount}`
+      ? `pág. ${page} de ${numPages} · bloque ${block + 1} de ${blockCount}${blockTag}`
       : `pág. ${page} de ${numPages}`)
     : ''
-  const activeParagraphs = view === 'blocks' && pageBlocks && blockCount > 0
-    ? pageBlocks[Math.min(block, blockCount - 1)]
-    : null
+  const activeParagraphs = activeBlock?.kind === 'text' ? activeBlock.paragraphs : null
   const translationParagraphs = translation
     ? translation.split(/\n+/).map(p => p.trim()).filter(p => p.length > 0)
     : []
+  const imageOrdinal = activeBlock?.kind === 'image' && pageBlocks
+    ? pageBlocks.filter(b => b.kind === 'image').indexOf(activeBlock) + 1
+    : 0
+  const imageTotal = pageBlocks ? pageBlocks.filter(b => b.kind === 'image').length : 0
 
   return (
     <div className="reader" data-night={night || undefined}>
@@ -914,70 +929,52 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         onTouchEnd={onTouchEnd} onMouseDown={onStageMouseDown} onMouseMove={onStageMouseMove}
         onMouseUp={onStageMouseUp}>
         {view === 'blocks' ? (
-          <div className="block-screen" key={`${page}:${block}`}>
+          <div className="block-screen" key={`${page}:${block}:${face}`}>
             {pageBlocks === null && !blocksError && (
               <div className="reader-loading">Extrayendo texto…</div>
             )}
             {blocksError && <p role="alert" className="lib-alert reader-error">{blocksError}</p>}
             {pageBlocks !== null && blockCount === 0 && !blocksError && (
-              imgCount !== null && imgCount > 0 && docRef.current ? (
-                <div className="block-prose">
-                  <p className="block-note">Esta página no tiene texto extraíble y se muestra como imagen.</p>
-                  <BlockPageFigure key={page} doc={docRef.current} page={page} night={night} />
-                </div>
-              ) : imgCount === null ? (
-                <div className="reader-loading">Cargando…</div>
-              ) : (
-                <div className="block-empty">
-                  <p>Esta página no tiene texto extraíble (puede ser una imagen escaneada).</p>
-                  <button type="button" className="btn" onClick={() => setViewAndPersist('page')}>
-                    Ver página original
-                  </button>
-                </div>
-              )
-            )}
-            {imgCount !== null && imgCount > 0 && docRef.current && (
-              <div className="block-figures">
-                <button type="button" className="reader-tool block-figures-toggle" aria-expanded={showFigures}
-                  onClick={() => setShowFigures(v => !v)}>
-                  {showFigures
-                    ? 'Ocultar imágenes'
-                    : `Ver ${imgCount} ${imgCount === 1 ? 'imagen' : 'imágenes'} de la página`}
+              <div className="block-empty">
+                <p>Esta página no tiene contenido extraíble.</p>
+                <button type="button" className="btn" onClick={() => setViewAndPersist('page')}>
+                  Ver página original
                 </button>
-                {showFigures && (
-                  <BlockPageFigure key={page} doc={docRef.current} page={page} night={night} />
-                )}
               </div>
             )}
-            {activeParagraphs && !studyOn && (
+            {activeBlock?.kind === 'image' && (
+              <figure className="block-figure" key={`img-${block}`}>
+                <img src={activeBlock.src} alt={activeBlock.alt} />
+                <figcaption>Imagen {imageOrdinal} de {imageTotal} · pág. {page}</figcaption>
+              </figure>
+            )}
+            {activeParagraphs && (!studyOn || face === 'orig') && (
               <article className="block-prose">
                 {activeParagraphs.map((p, i) => <p key={i}>{p}</p>)}
               </article>
             )}
-            {activeParagraphs && studyOn && (
-              <div className="study-split">
-                <article className="study-col">
-                  <h2 className="study-head">Original</h2>
-                  {activeParagraphs.map((p, i) => <p key={i}>{p}</p>)}
-                </article>
-                <article className="study-col study-trans" lang={studyLang}>
-                  <h2 className="study-head">Traducción · {studyLangLabel(studyLang)}</h2>
-                  {translating && <p className="study-status">Traduciendo…</p>}
-                  {transError && (
-                    <div className="study-error">
-                      <p role="alert">{transError}</p>
+            {activeParagraphs && studyOn && face === 'trans' && (
+              <article className="block-prose" lang={studyLang}>
+                <p className="block-note">Traducción · {studyLangLabel(studyLang)}</p>
+                {translating && <p className="block-note">Traduciendo…</p>}
+                {transError && (
+                  <>
+                    <p role="alert" className="lib-alert">{transError}</p>
+                    <p>
                       <button type="button" className="reader-tool"
                         onClick={() => setTransNonce(n => n + 1)}>
                         Reintentar
                       </button>
-                    </div>
-                  )}
-                  {!translating && !transError && translationParagraphs.map((p, i) => <p key={i}>{p}</p>)}
-                </article>
-              </div>
+                    </p>
+                  </>
+                )}
+                {!translating && !transError && translationParagraphs.map((p, i) => <p key={i}>{p}</p>)}
+              </article>
             )}
             {blockCount > 0 && (
-              <p className="block-pager">Bloque {Math.min(block, blockCount - 1) + 1} de {blockCount}</p>
+              <p className="block-pager">
+                Bloque {Math.min(block, blockCount - 1) + 1} de {blockCount}{blockTag}
+              </p>
             )}
           </div>
         ) : (
@@ -1095,41 +1092,5 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         </div>
       )}
     </div>
-  )
-}
-
-/** Render de la página original dentro de la vista bloques (para ver sus imágenes). */
-function BlockPageFigure({ doc, page, night }: { doc: PDFDocumentProxy; page: number; night: boolean }) {
-  const figureCanvas = useRef<HTMLCanvasElement | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const pdfPage = await doc.getPage(page)
-        if (cancelled) return
-        const base = pdfPage.getViewport({ scale: 1 })
-        const cssScale = 672 / base.width // ancho de la prosa
-        const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
-        const viewport = pdfPage.getViewport({ scale: cssScale * dpr })
-        const canvas = figureCanvas.current
-        const ctx = canvas?.getContext('2d')
-        if (!canvas || !ctx || cancelled) return
-        canvas.width = Math.round(viewport.width)
-        canvas.height = Math.round(viewport.height)
-        await pdfPage.render({ canvasContext: ctx, viewport }).promise
-        pdfPage.cleanup?.()
-      } catch {
-        /* si falla, la figura queda vacía */
-      }
-    })()
-    return () => { cancelled = true }
-  }, [doc, page])
-
-  return (
-    <figure className="block-figure">
-      <canvas ref={figureCanvas} className={night ? 'night' : ''} aria-label={`Página ${page} original`} />
-      <figcaption>Página {page} original</figcaption>
-    </figure>
   )
 }

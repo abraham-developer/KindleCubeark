@@ -10,7 +10,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.status === 204 ? (undefined as T) : res.json()
 }
 
-export type Position = { page: number; block?: number; blockCount?: number } | { cfi: string; percent: number; section: number }
+export type Position = { page: number; block?: number; blockCount?: number; face?: 'orig' | 'trans' } | { cfi: string; percent: number; section: number }
 export type Book = { id: string; title: string; author: string; format: 'pdf' | 'epub'; cover_url: string | null; file_url: string; total_pages: number | null; file_size: number; added_at: string; folder_id: string | null; percent: string | null; position: Position | null; last_read: string | null }
 export type Annotation = { id: string; book_id: string; kind: 'highlight' | 'note'; position: any; quoted_text: string; note: string; color: string; created_at: string }
 export type Folder = { id: string; name: string; color: string; book_count: number; created_at: string }

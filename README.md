@@ -159,17 +159,22 @@ El lector PDF tiene dos vistas (se cambian en la barra de opciones):
   se guarda a nivel de bloque (`{page, block, blockCount}`), así que al
   reabrir retomas el bloque exacto.
 
-El **estudio bilingüe** es opcional y vive sobre la vista por bloques: parte
-la pantalla en original + traducción (inglés, alemán, chino o español) para
-estudiar el idioma mientras lees. Traduce con LibreTranslate autohospedado
-(Argos Translate, 100% open source y offline); la app lo usa por `POST
-/api/translate`, que valida sesión y reenvía al motor.
+El **estudio bilingüe** es opcional y vive sobre la vista por bloques:
+intercala pantallas completas —un bloque en original, el mismo traducido
+(inglés, alemán, chino o español), y así— para estudiar el idioma mientras
+lees (las imágenes ocupan una sola pantalla, no se traducen). El progreso
+se guarda por pantalla (`{page, block, blockCount, face}`) y al reabrir
+retomas la exacta; al desactivarlo vuelves a lectura normal en el mismo
+bloque. Traduce con
+LibreTranslate autohospedado (Argos Translate, 100% open source y offline);
+la app lo usa por `POST /api/translate`, que valida sesión y reenvía al
+motor.
 
-En la vista por bloques, las páginas con ilustraciones muestran un botón
-«Ver N imágenes» que expande la página original inline, sin salir del modo
-bloques. Y si una página no tiene texto extraíble pero sí imágenes (texto
-en curvas o fuentes raras), se muestra directo como imagen en su propio
-bloque en vez del aviso sin salida.
+En la vista por bloques, cada página se separa por posición: el texto va
+como bloques refluidos y cada imagen ocupa su propio bloque, intercalados
+en orden de lectura (texto, imagen, texto…). Las páginas escaneadas se
+leen como bloques-imagen. La lectura usa estilo hoja de papel (tarjeta
+elevada en escritorio, a sangre en teléfono).
 
 **Diccionario**: mantén presionada una palabra con el dedo (o con el mouse)
 y se marca en azul con su significado en un popover: glosas en español del

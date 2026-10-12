@@ -35,12 +35,24 @@ export function savePdfView(view: PdfView): void {
 
 type Line = { y: number; x: number; text: string }
 
+/** Párrafo con su rango vertical (unidades usuario PDF, Y hacia arriba). */
+export type TextSpan = { text: string; yTop: number; yBottom: number }
+
+/** Imagen extraída con su rango vertical (mismo espacio que TextSpan). */
+export type PageImage = { src: string; alt: string; yTop: number; yBottom: number }
+
+/** Bloque de lectura: texto refluido o imagen en hoja propia. */
+export type ContentBlock =
+  | { kind: 'text'; paragraphs: string[] }
+  | { kind: 'image'; src: string; alt: string }
+
 /**
- * Agrupa ítems de pdf.js en líneas (por coordenada Y) y luego en párrafos:
- * un salto vertical mayor a ~1.6× la altura típica de línea abre un párrafo
- * nuevo. Une palabras con espacio y resuelve guiones de corte de línea.
+ * Agrupa ítems de pdf.js en líneas (por coordenada Y) y luego en párrafos
+ * con su rango vertical: un salto mayor a ~1.6× la altura típica de línea
+ * abre un párrafo nuevo. Une palabras con espacio y resuelve guiones de
+ * corte de línea.
  */
-export function itemsToParagraphs(items: PdfTextItem[]): string[] {
+export function itemsToSpans(items: PdfTextItem[]): TextSpan[] {
   const usable = items.filter(it => it.str != null && it.str !== '')
   if (usable.length === 0) return []
 
@@ -68,23 +80,40 @@ export function itemsToParagraphs(items: PdfTextItem[]): string[] {
     }
   }
 
-  const paragraphs: string[] = []
+  const spans: TextSpan[] = []
   let current = ''
+  let top = 0
+  let bottom = 0
   let prevY: number | null = null
+  const flush = () => {
+    const text = current.trim()
+    if (text) spans.push({ text, yTop: top, yBottom: bottom })
+    current = ''
+  }
   for (const line of lines) {
     const text = line.text.replace(/\n$/, '')
     const gapBreak = prevY != null && prevY - line.y > paragraphGap
     const eolBreak = line.text.endsWith('\n') && /[.!?…:;»"”']\s*$/.test(text)
     if ((gapBreak || eolBreak) && current.trim()) {
-      paragraphs.push(current.trim())
+      flush()
       current = text
+      top = line.y
+      bottom = line.y
     } else {
+      if (!current) { top = line.y; bottom = line.y }
       current = current ? joinWord(current, text) : text
+      top = Math.max(top, line.y)
+      bottom = Math.min(bottom, line.y)
     }
     prevY = line.y
   }
-  if (current.trim()) paragraphs.push(current.trim())
-  return paragraphs.filter(p => p.length > 0)
+  flush()
+  return spans
+}
+
+/** Atajo clásico: ítems → solo textos de párrafo (sin posiciones). */
+export function itemsToParagraphs(items: PdfTextItem[]): string[] {
+  return itemsToSpans(items).map(s => s.text)
 }
 
 /** Une dos fragmentos con espacio, salvo guion de corte de línea («pala-» + «bra»). */
@@ -99,29 +128,66 @@ function joinWord(left: string, right: string): string {
   return `${left} ${right}`
 }
 
+export type ContentItem =
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; src: string; alt: string }
+
+/**
+ * Parte contenido en bloques: el texto se acumula hasta ~targetChars
+ * caracteres (cortando por párrafo, u oración si uno excede el objetivo)
+ * y cada imagen ocupa su propio bloque (vacía el texto pendiente).
+ */
+export function chunkContentItems(items: ContentItem[], targetChars = BLOCK_TARGET_CHARS): ContentBlock[] {
+  const blocks: ContentBlock[] = []
+  let current: string[] = []
+  let currentLen = 0
+  const flushText = () => {
+    if (current.length > 0) blocks.push({ kind: 'text', paragraphs: current })
+    current = []
+    currentLen = 0
+  }
+  for (const item of items) {
+    if (item.kind === 'image') {
+      flushText()
+      blocks.push({ kind: 'image', src: item.src, alt: item.alt })
+      continue
+    }
+    const parts = item.text.length > targetChars ? splitLongParagraph(item.text, targetChars) : [item.text]
+    for (const part of parts) {
+      if (currentLen + part.length > targetChars && current.length > 0) flushText()
+      current.push(part)
+      currentLen += part.length
+    }
+  }
+  flushText()
+  return blocks
+}
+
 /**
  * Parte párrafos en bloques de ~targetChars caracteres, cortando siempre por
  * párrafo. Un párrafo más largo que el objetivo se divide por oraciones.
  */
 export function chunkParagraphs(paragraphs: string[], targetChars = BLOCK_TARGET_CHARS): string[][] {
-  const blocks: string[][] = []
-  let current: string[] = []
-  let currentLen = 0
-  const flush = () => {
-    if (current.length > 0) blocks.push(current)
-    current = []
-    currentLen = 0
-  }
-  for (const paragraph of paragraphs) {
-    const parts = paragraph.length > targetChars ? splitLongParagraph(paragraph, targetChars) : [paragraph]
-    for (const part of parts) {
-      if (currentLen + part.length > targetChars && current.length > 0) flush()
-      current.push(part)
-      currentLen += part.length
-    }
-  }
-  flush()
-  return blocks
+  return chunkContentItems(paragraphs.map(text => ({ kind: 'text' as const, text })), targetChars)
+    .filter((b): b is { kind: 'text'; paragraphs: string[] } => b.kind === 'text')
+    .map(b => b.paragraphs)
+}
+
+/**
+ * Arma los bloques de una página mezclando texto e imágenes en orden de
+ * lectura (de arriba hacia abajo por borde superior; el texto gana empates).
+ */
+export function buildContentBlocks(
+  spans: TextSpan[],
+  images: PageImage[],
+  targetChars = BLOCK_TARGET_CHARS,
+): ContentBlock[] {
+  const items: Array<ContentItem & { yTop: number }> = [
+    ...spans.map(s => ({ kind: 'text' as const, text: s.text, yTop: s.yTop })),
+    ...images.map(img => ({ kind: 'image' as const, src: img.src, alt: img.alt, yTop: img.yTop })),
+  ]
+  items.sort((a, b) => (b.yTop - a.yTop) || (a.kind === 'text' ? -1 : 1))
+  return chunkContentItems(items, targetChars)
 }
 
 /** Divide un párrafo largo por oraciones (y por palabras si no hay puntos). */
@@ -157,6 +223,25 @@ export function pageItemsToBlocks(items: PdfTextItem[], targetChars = BLOCK_TARG
 }
 
 /**
+ * Pantalla dentro de la página en vista bloques: en lectura normal cada
+ * bloque es una pantalla; en estudio cada bloque de TEXTO ocupa dos
+ * (original + traducción) y las imágenes una sola (no se traducen).
+ */
+export function studyScreenPosition(
+  blocks: ContentBlock[],
+  block: number,
+  face: BlockFace,
+  study: boolean,
+): { index: number; total: number } {
+  const screensOf = (b: ContentBlock) => 1 + (study && b.kind === 'text' ? 1 : 0)
+  const total = Math.max(1, blocks.reduce((acc, b) => acc + screensOf(b), 0))
+  const at = Math.max(0, Math.min(Math.floor(block) || 0, Math.max(0, blocks.length - 1)))
+  let index = blocks.slice(0, at).reduce((acc, b) => acc + screensOf(b), 0)
+  if (study && face === 'trans' && blocks[at]?.kind === 'text') index += 1
+  return { index: Math.min(index, total - 1), total }
+}
+
+/**
  * Porcentaje de lectura con precisión de bloque: la página aporta su
  * fracción completa repartida entre sus bloques.
  */
@@ -165,6 +250,46 @@ export function blockPercent(page: number, block: number, blockCount: number, nu
   const count = Math.max(1, Math.floor(blockCount) || 1)
   const idx = Math.max(0, Math.min(Math.floor(block) || 0, count - 1))
   return (((page - 1) + (idx + 1) / count) / numPages) * 100
+}
+
+/** Cara visible en estudio bilingüe: el bloque original o su traducción. */
+export type BlockFace = 'orig' | 'trans'
+
+/**
+ * Retomado en vista bloques. La posición guarda el bloque ORIGINAL con su
+ * cara ({block, blockCount, face?}): se acota al total real y la cara solo
+ * aplica en estudio sobre bloques de texto (las imágenes no se traducen).
+ * También tolera el esquema previo de índice doble (blockCount === 2N).
+ */
+export function resumeBlockFace(
+  position: unknown,
+  blocks: ContentBlock[],
+  study: boolean,
+): { block: number; face: BlockFace } {
+  const count = blocks.length
+  if (count <= 0) return { block: 0, face: 'orig' }
+  const pos = (typeof position === 'object' && position !== null ? position : {}) as {
+    block?: unknown
+    blockCount?: unknown
+    face?: unknown
+  }
+  const rawBlock = typeof pos.block === 'number' && Number.isFinite(pos.block) ? Math.floor(pos.block) : 0
+  const rawCount = typeof pos.blockCount === 'number' && Number.isFinite(pos.blockCount)
+    ? Math.floor(pos.blockCount)
+    : 0
+  const clamp = (value: number) => Math.max(0, Math.min(value, count - 1))
+  let block: number
+  let face: BlockFace = 'orig'
+  if (rawCount === count * 2) {
+    // esquema previo de índice doble: pantalla i = bloque floor(i/2), cara i%2
+    block = clamp(Math.floor(rawBlock / 2))
+    if (study && rawBlock % 2 === 1) face = 'trans'
+  } else {
+    block = clamp(rawBlock)
+    if (study && pos.face === 'trans') face = 'trans'
+  }
+  if (face === 'trans' && blocks[block]?.kind !== 'text') face = 'orig'
+  return { block, face }
 }
 
 /** Índice de bloque inicial desde el progreso guardado (con saneo). */

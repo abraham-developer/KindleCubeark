@@ -11,12 +11,13 @@ import { getDocument } from 'pdfjs-dist'
 import { api, type Book, type Position } from '../api'
 import { mockApi, stubBrowser } from './mocks'
 import { clearDictionaryCache } from '../lib/dictionary'
+import { clearTranslationCache } from '../lib/study'
 import Reader from '../reader/Reader'
 
 vi.mock('pdfjs-dist', () => ({
   getDocument: vi.fn(),
   GlobalWorkerOptions: { workerSrc: '' },
-  OPS: { paintImageXObject: 999 },
+  OPS: { save: 1, restore: 2, transform: 3, paintImageXObject: 999 },
   TextLayer: class {
     constructor(public options: unknown) {}
     async render() { /* jsdom no pinta */ }
@@ -26,8 +27,7 @@ vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worke
 
 const realSleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
-type Spy = ReturnType<typeof vi.spyOn>
-const apiSpies: Spy[] = []
+const apiSpies: { mockRestore(): void }[] = []
 
 const NUM_PAGES = 12
 
@@ -108,6 +108,7 @@ beforeEach(() => {
 afterEach(() => {
   window.localStorage.clear()
   clearDictionaryCache()
+  clearTranslationCache() // la caché por texto vive en el módulo: no debe cruzar tests
   vi.unstubAllGlobals()
   delete (document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint
   for (const s of apiSpies) s.mockRestore()
@@ -143,23 +144,49 @@ describe('PdfReader por bloques', () => {
     expect(screen.queryByText(/Línea 01:/)).toBeNull()
   })
 
-  it('el estudio bilingüe parte la pantalla solo cuando está activado', async () => {
+  it('el estudio bilingüe intercala original y traducción por pantallas', async () => {
     window.localStorage.setItem('kc.study.on', '1')
     window.localStorage.setItem('kc.study.lang', 'de')
     const translate = vi.fn(async () => ({ translated_text: 'Der Garten blüht im Aprilregen.' }))
     apiSpies.push(...Object.values(mockApi({ translate })))
-    renderReader({ position: { page: 7 }, percent: '70' })
+    const { patchProgress } = renderReader({ position: { page: 7 }, percent: '70' })
 
-    expect(await screen.findByText('Original')).toBeInTheDocument()
+    expect(await screen.findByText('Bloque 1 de 3 · original')).toBeInTheDocument()
+    expect(screen.getByText(/Línea 01:/)).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(await screen.findByText('Bloque 1 de 3 · traducción')).toBeInTheDocument()
     expect(screen.getByText('Traducción · Alemán')).toBeInTheDocument()
     expect(await screen.findByText('Der Garten blüht im Aprilregen.')).toBeInTheDocument()
     expect(translate).toHaveBeenCalledWith(expect.stringContaining('Línea 01:'), 'de')
 
-    // desactivarlo vuelve a la minilectura simple (un solo texto)
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(await screen.findByText('Bloque 2 de 3 · original')).toBeInTheDocument()
+
+    // el progreso guarda bloque original + cara (pantalla 2 de 6)
+    expect(await until(() => patchProgress.mock.calls.length === 1, 200)).toBe(true)
+    const [id, position, percent] = patchProgress.mock.calls[0]
+    expect(id).toBe('bk1')
+    expect(position).toEqual({ page: 7, block: 1, blockCount: 3, face: 'orig' })
+    expect(percent).toBeCloseTo(((7 - 1) + 3 / 6) / NUM_PAGES * 100, 5)
+
+    // desactivarlo vuelve a lectura normal en el bloque actual
     fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
     fireEvent.click(await screen.findByRole('button', { name: /estudio: activado/i }))
-    expect(await until(() => screen.queryByText('Traducción · Alemán') == null)).toBe(true)
-    expect(screen.getByText(/Línea 01:/)).toBeInTheDocument()
+    expect(await screen.findByText('Bloque 2 de 3')).toBeInTheDocument()
+    expect(screen.queryByText(/· traducción/i)).not.toBeInTheDocument()
+  }, 15_000)
+
+  it('en estudio retoma la pantalla guardada (bloque + cara)', async () => {
+    window.localStorage.setItem('kc.study.on', '1')
+    window.localStorage.setItem('kc.study.lang', 'de')
+    const translate = vi.fn(async () => ({ translated_text: 'Der Garten blüht.' }))
+    apiSpies.push(...Object.values(mockApi({ translate })))
+    renderReader({ position: { page: 7, block: 1, blockCount: 3, face: 'trans' }, percent: '58' })
+
+    // bloque 2, cara traducción
+    expect(await screen.findByText('Bloque 2 de 3 · traducción')).toBeInTheDocument()
+    expect(await screen.findByText('Der Garten blüht.')).toBeInTheDocument()
   })
 
   it('sin estudio activado no traduce ni muestra la columna traducida', async () => {
@@ -250,48 +277,62 @@ describe('PdfReader por bloques', () => {
     expect(screen.getByText('English')).toBeInTheDocument()
   })
 
-  it('página con imágenes ofrece verlas inline sin salir de bloques', async () => {
-    // la misma imagen pintada dos veces cuenta una sola vez
+  it('página mixta intercala texto e imágenes en orden de lectura', async () => {
+    apiSpies.push(vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: vi.fn() } as never))
+    // jsdom no implementa toDataURL (devuelve null): se stubbea el recorte
+    apiSpies.push(vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,recorte'))
     getPage.mockImplementation(async (n: number) => ({
       pageNumber: n,
       getViewport: vi.fn(() => ({ width: 600, height: 800 })),
       render: vi.fn(() => ({ promise: Promise.resolve() })),
-      getTextContent: vi.fn(async () => ({ items: pageTextItems() })),
+      getTextContent: vi.fn(async () => ({ items: [
+        { str: 'Texto de arriba.', transform: [12, 0, 0, 12, 10, 700], width: 100, height: 12, hasEOL: true },
+        { str: 'Texto de abajo.', transform: [12, 0, 0, 12, 10, 500], width: 100, height: 12, hasEOL: true },
+      ] })),
+      // imagen 100x100 en y 550-650: entre ambos párrafos
       getOperatorList: vi.fn(async () => ({
-        fnArray: [999, 999, 5],
-        argsArray: [['img-paisaje'], ['img-paisaje'], []],
+        fnArray: [3, 999],
+        argsArray: [[100, 0, 0, 100, 50, 550], ['foto']],
       })),
       cleanup: vi.fn(),
     }))
     renderReader({ position: { page: 7 }, percent: '70' })
 
-    const toggle = await screen.findByRole('button', { name: /ver 1 imagen de la página/i })
-    fireEvent.click(toggle)
-    expect(await screen.findByText('Página 7 original')).toBeInTheDocument()
+    expect(await screen.findByText('Bloque 1 de 3')).toBeInTheDocument()
+    expect(screen.getByText('Texto de arriba.')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /ocultar imágenes/i }))
-    expect(screen.queryByText('Página 7 original')).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(await screen.findByText('Bloque 2 de 3 · imagen')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Imagen 1' })).toBeInTheDocument()
+    expect(screen.getByText(/imagen 1 de 1/i)).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    expect(await screen.findByText('Bloque 3 de 3')).toBeInTheDocument()
+    expect(screen.getByText('Texto de abajo.')).toBeInTheDocument()
   })
 
-  it('sin texto pero con imágenes muestra la página como imagen automáticamente', async () => {
+  it('página escaneada (solo imagen) se lee como bloque-imagen', async () => {
+    apiSpies.push(vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue({ drawImage: vi.fn() } as never))
+    apiSpies.push(vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,recorte'))
     getPage.mockImplementation(async (n: number) => ({
       pageNumber: n,
       getViewport: vi.fn(() => ({ width: 600, height: 800 })),
       render: vi.fn(() => ({ promise: Promise.resolve() })),
       getTextContent: vi.fn(async () => ({ items: [] })),
       getOperatorList: vi.fn(async () => ({
-        fnArray: [999],
-        argsArray: [['img-foto']],
+        fnArray: [3, 999],
+        argsArray: [[600, 0, 0, 800, 0, 0], ['pagina']],
       })),
       cleanup: vi.fn(),
     }))
     renderReader({ position: { page: 7 }, percent: '70' })
 
-    // bloque-imagen directo, sin botón ni callejón sin salida
-    expect(await screen.findByText('Página 7 original')).toBeInTheDocument()
-    expect(screen.getByText(/se muestra como imagen/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /ver página original/i })).not.toBeInTheDocument()
-    expect(screen.queryByText(/bloque \d+ de/i)).not.toBeInTheDocument()
+    expect(await screen.findByText('Bloque 1 de 1 · imagen')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Imagen 1' })).toBeInTheDocument()
   })
 
   it('sin texto ni imágenes mantiene el aviso con salida a página original', async () => {
@@ -305,7 +346,7 @@ describe('PdfReader por bloques', () => {
     }))
     renderReader({ position: { page: 7 }, percent: '70' })
 
-    expect(await screen.findByText(/no tiene texto extraíble/i)).toBeInTheDocument()
+    expect(await screen.findByText(/no tiene contenido extraíble/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /ver página original/i })).toBeInTheDocument()
   })
 })

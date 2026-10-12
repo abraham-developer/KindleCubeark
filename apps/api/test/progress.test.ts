@@ -97,6 +97,12 @@ describe('progress', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().position).toEqual({ page: 2, block: 1, blockCount: 3 })
     expect(res.json().percent).toBe(30)
+    // en estudio se suma la cara (original/traducción) sin romper la validación
+    const resFace = await patchProgress(app, cookie, book.id, {
+      position: { page: 2, block: 1, blockCount: 3, face: 'trans' }, percent: 31,
+    })
+    expect(resFace.statusCode).toBe(200)
+    expect(resFace.json().position).toEqual({ page: 2, block: 1, blockCount: 3, face: 'trans' })
     await app.close()
   })
 
