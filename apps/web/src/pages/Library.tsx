@@ -348,11 +348,11 @@ export default function Library() {
   }, [books])
 
   const visible = useMemo(() => {
-    const inFolder = foldersFailed
+    // Todos muestra toda la biblioteca sin importar la carpeta; solo al
+    // entrar a una carpeta se filtra a sus libros
+    const inFolder = foldersFailed || activeFolderId == null
       ? books
-      : activeFolderId == null
-        ? books.filter(b => !b.folder_id)
-        : books.filter(b => b.folder_id === activeFolderId)
+      : books.filter(b => b.folder_id === activeFolderId)
     const q = query.trim().toLowerCase()
     const filtered = q
       ? inFolder.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q))

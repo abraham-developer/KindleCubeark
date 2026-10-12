@@ -14,8 +14,8 @@ afterEach(() => {
 })
 
 describe('idiomas de estudio', () => {
-  it('ofrece inglés, alemán y chino', () => {
-    expect(STUDY_LANGS.map(l => l.code)).toEqual(['en', 'de', 'zh'])
+  it('ofrece inglés, alemán, chino y español', () => {
+    expect(STUDY_LANGS.map(l => l.code)).toEqual(['en', 'de', 'zh', 'es'])
     expect(studyLangLabel('de')).toBe('Alemán')
     expect(isStudyLang('zh')).toBe(true)
     expect(isStudyLang('fr')).toBe(false)

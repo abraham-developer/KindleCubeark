@@ -70,6 +70,25 @@ button { font-family: var(--serif); }
 .folder-view-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .folder-view-head h2 { margin: 0; font-size: 1.15rem; font-weight: 400; }
 .book-card[draggable='true'] { cursor: grab; }
+.folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Responsive: las carpetas pasan de tira horizontal a bloques de 2 columnas
+   con buen tamaño táctil; la tira con scroll queda solo en escritorio. */
+@media (max-width: 760px) {
+  .folder-row {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px; overflow: visible; padding-bottom: 0;
+  }
+  .folder-card {
+    display: flex; width: 100%; min-height: 52px;
+    padding: 12px; font-size: .92rem; border-radius: 10px;
+    box-shadow: 0 2px 6px var(--shadow);
+  }
+  .folder-card.all, .folder-card.new { justify-content: center; align-items: center; }
+  .folder-card .folder-open { flex: 1; min-width: 0; }
+  .folder-card .folder-name { white-space: normal; overflow-wrap: break-word; }
+  .folder-card .menu-wrap { position: static; }
+}
 
 /* diálogo de carpeta (Task 7) */
 .folder-dialog-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / .45); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 30; }
@@ -175,6 +194,8 @@ button { font-family: var(--serif); }
   position: relative; flex: 1; overflow: hidden;
   display: flex; align-items: center; justify-content: center;
   perspective: 1200px; touch-action: pan-y;
+  /* la pulsación larga la maneja el lector (diccionario): sin callout nativo */
+  -webkit-touch-callout: none;
 }
 .reader-loading, .reader-error { position: absolute; z-index: 4; color: var(--ink-soft); font-size: .9rem; }
 .reader-error { padding: 0 16px; text-align: center; }
@@ -415,7 +436,7 @@ button { font-family: var(--serif); }
 /* Vista por bloques: minilectura estilo Kindle (una pantalla por bloque) */
 .block-screen {
   position: absolute; inset: 0; z-index: 2;
-  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch;
   display: flex; flex-direction: column; align-items: center;
   padding: 28px 20px 20px;
   animation: turn-fade 200ms ease-out both;
@@ -427,7 +448,11 @@ button { font-family: var(--serif); }
   width: 100%; max-width: 42rem;
   font-size: 1.12rem; line-height: 1.75;
 }
-.block-prose p { margin: 0 0 1em; text-align: justify; }
+/* palabras largas (típico en alemán) sin romper el ancho de pantalla */
+.block-prose p, .study-col p {
+  margin: 0 0 1em; text-align: justify;
+  overflow-wrap: break-word; hyphens: auto;
+}
 .block-pager {
   margin: auto 0 0; padding-top: 16px;
   font-size: .8rem; color: var(--ink-soft);
@@ -445,8 +470,7 @@ button { font-family: var(--serif); }
   border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--paper-raised); overflow: hidden;
 }
-.study-col { padding: 18px 20px; font-size: 1.02rem; line-height: 1.7; }
-.study-col p { margin: 0 0 1em; }
+.study-col { padding: 18px 20px; font-size: 1.02rem; line-height: 1.7; min-width: 0; }
 .study-col + .study-col { border-left: 1px solid var(--line); }
 .study-head {
   margin: 0 0 12px; font-size: .78rem; font-weight: 400;
@@ -455,6 +479,49 @@ button { font-family: var(--serif); }
 .study-status { color: var(--ink-soft); }
 .study-error p { color: var(--danger); font-size: .9rem; }
 @media (max-width: 760px) {
-  .study-split { grid-template-columns: 1fr; }
+  .study-split { grid-template-columns: minmax(0, 1fr); }
   .study-col + .study-col { border-left: 0; border-top: 1px solid var(--line); }
+  /* teléfono: más pantalla útil, texto alineado a la izquierda */
+  .block-screen { padding: 20px 16px 16px; }
+  .block-prose { font-size: 1.05rem; line-height: 1.7; }
+  .block-prose p, .study-col p { text-align: left; }
+  .study-col { padding: 14px 16px; font-size: 1rem; }
 }
+
+/* Figura de página original dentro de la vista por bloques (ver imágenes) */
+.block-figures { width: 100%; max-width: 42rem; margin: 0 0 12px; }
+.block-figures-toggle { margin-bottom: 12px; }
+.block-figure { margin: 0 0 12px; }
+.block-figure canvas {
+  width: 100%; height: auto; display: block;
+  background: #fff; box-shadow: 0 2px 10px var(--shadow);
+}
+.block-figure canvas.night { filter: invert(0.88) hue-rotate(180deg); }
+.block-figure figcaption {
+  margin-top: 6px; font-size: .8rem; color: var(--ink-soft); text-align: center;
+}
+
+/* Popover del diccionario (pulsación larga sobre una palabra) */
+.dict-popover {
+  position: fixed; z-index: 9;
+  width: min(320px, calc(100vw - 24px)); max-height: min(50vh, 380px);
+  overflow-y: auto; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--paper-raised); border: 1px solid var(--line);
+  box-shadow: 0 6px 20px var(--shadow);
+}
+.dict-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.dict-word { margin: 0; font-size: 1.05rem; flex: 1; min-width: 0; overflow-wrap: break-word; }
+.dict-lang {
+  flex: none; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-soft); border: 1px solid var(--line); border-radius: 10px; padding: 2px 8px;
+}
+.dict-close {
+  flex: none; border: 0; background: none; color: var(--ink-soft);
+  font-size: 1.1rem; line-height: 1; cursor: pointer; padding: 2px 4px;
+}
+.dict-pos { margin: 0 0 4px; font-size: .78rem; font-style: italic; color: var(--ink-soft); }
+.dict-popover ol { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+.dict-popover li { font-size: .92rem; line-height: 1.5; overflow-wrap: break-word; }
+.dict-example { display: block; font-size: .82rem; font-style: italic; color: var(--ink-soft); }
+.dict-status { margin: 0; font-size: .9rem; color: var(--ink-soft); }
+.dict-error { margin: 0 0 8px; font-size: .9rem; color: var(--danger); }

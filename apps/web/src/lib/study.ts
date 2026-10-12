@@ -7,12 +7,13 @@ export const STUDY_LANGS = [
   { code: 'en', label: 'Inglés' },
   { code: 'de', label: 'Alemán' },
   { code: 'zh', label: 'Chino' },
+  { code: 'es', label: 'Español' },
 ] as const
 
 export type StudyLang = (typeof STUDY_LANGS)[number]['code']
 
 export function isStudyLang(value: unknown): value is StudyLang {
-  return value === 'en' || value === 'de' || value === 'zh'
+  return value === 'en' || value === 'de' || value === 'zh' || value === 'es'
 }
 
 export function studyLangLabel(code: StudyLang): string {

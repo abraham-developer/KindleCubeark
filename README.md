@@ -160,7 +160,17 @@ El lector PDF tiene dos vistas (se cambian en la barra de opciones):
   reabrir retomas el bloque exacto.
 
 El **estudio bilingüe** es opcional y vive sobre la vista por bloques: parte
-la pantalla en original + traducción (inglés, alemán o chino) para estudiar
-el idioma mientras lees. Traduce con LibreTranslate autohospedado (Argos
-Translate, 100% open source y offline); la app lo usa por `POST
+la pantalla en original + traducción (inglés, alemán, chino o español) para
+estudiar el idioma mientras lees. Traduce con LibreTranslate autohospedado
+(Argos Translate, 100% open source y offline); la app lo usa por `POST
 /api/translate`, que valida sesión y reenvía al motor.
+
+En la vista por bloques, las páginas con ilustraciones muestran un botón
+«Ver N imágenes» que expande la página original inline, sin salir del modo
+bloques.
+
+**Diccionario**: mantén presionada una palabra con el dedo (o con el mouse)
+y aparece su significado en un popover: glosas en español del Wikcionario
+(que cubre palabras extranjeras) con respaldo en inglés. No abre el menú de
+resaltado; para resaltar en táctil selecciona con doble toque y arrastra los
+tiradores como siempre. Requiere internet (consulta directa a Wikimedia).

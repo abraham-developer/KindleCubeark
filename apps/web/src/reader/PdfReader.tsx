@@ -3,8 +3,9 @@
 // modo noche (filtro CSS) y progreso sincronizado (Task 12). Task 14 agrega
 // textLayer (selección de texto), menú de anotación, resaltados con overlays
 // mix-blend-mode, notas de página y marcador (cinta). Además: vista por
-// bloques estilo Kindle (minilecturas con progreso a nivel de bloque) y modo
-// estudio bilingüe opcional (original + traducción lado a lado).
+// bloques estilo Kindle (minilecturas con progreso a nivel de bloque), modo
+// estudio bilingüe opcional (original + traducción lado a lado), figuras de
+// página en bloques (ver imágenes) y diccionario por pulsación larga.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -19,11 +20,15 @@ import {
   STUDY_LANGS, loadStudyPrefs, saveStudyPrefs, studyLangLabel, translateBlock,
   type StudyLang,
 } from '../lib/study'
+import {
+  DictNotFound, lookupAt, wordAtPoint, wordCandidates, type DictEntry,
+} from '../lib/dictionary'
 import PageTurn from './PageTurn'
 import { TopBar, BottomBar, BookmarkButton } from './Chrome'
 import SelectionMenu, { type HighlightColor } from './SelectionMenu'
 import NoteEditor from './NoteEditor'
 import AnnotationsPanel from './AnnotationsPanel'
+import DictPopover from './DictPopover'
 
 const { getDocument, GlobalWorkerOptions } = pdfjs
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -98,6 +103,22 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const [transError, setTransError] = useState<string | null>(null)
   const [transNonce, setTransNonce] = useState(0) // reintento manual
   const transToken = useRef(0)
+
+  // ── Imágenes en vista bloques (conteo + figura expandible) ───────────────
+  const [imgCount, setImgCount] = useState<number | null>(null) // null = sin escanear
+  const [showFigures, setShowFigures] = useState(false)
+  const imgCache = useRef(new Map<number, number>())
+
+  // ── Diccionario (pulsación larga con el dedo sobre una palabra) ──────────
+  const [dictReq, setDictReq] = useState<{ x: number; y: number; text: string; offset: number } | null>(null)
+  const [dictEntry, setDictEntry] = useState<DictEntry | null>(null)
+  const [dictLoading, setDictLoading] = useState(false)
+  const [dictError, setDictError] = useState<string | null>(null)
+  const [dictNonce, setDictNonce] = useState(0) // reintento manual
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holdPoint = useRef<{ x: number; y: number } | null>(null)
+  const dictHoldAt = useRef(0) // la pulsación que abrió el popover no navega
+  const dictClosedAt = useRef(0) // el tap que cerró el popover no navega
 
   // ── Anotaciones (Task 14) ────────────────────────────────────────────────
   const [annotations, setAnnotations] = useState<Annotation[]>([])
@@ -353,13 +374,86 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     )
   }, [studyOn, view, blockText, studyLang, transNonce])
 
-  // Un cambio de página invalida el menú/editor y la selección pendiente
+  // ── Conteo de imágenes de la página (solo vista bloques, cacheado) ──────
+  // Escanea la lista de operadores buscando pintados de imagen; la misma
+  // imagen repetida (logo, fondo) cuenta una sola vez por nombre de XObject.
+  useEffect(() => {
+    if (view !== 'blocks' || !numPages) return
+    const doc = docRef.current
+    if (!doc) return
+    const cached = imgCache.current.get(page)
+    if (cached !== undefined) { setImgCount(cached); return }
+    const paintImageOp = (pdfjs as unknown as { OPS?: { paintImageXObject?: unknown } })
+      .OPS?.paintImageXObject
+    if (paintImageOp === undefined) { setImgCount(0); return } // pdfjs mockeado sin OPS
+    let cancelled = false
+    setImgCount(null)
+    void (async () => {
+      try {
+        const pdfPage = await doc.getPage(page)
+        const getOpList = (pdfPage as unknown as {
+          getOperatorList?: () => Promise<{ fnArray: unknown[]; argsArray: Array<ArrayLike<unknown>> }>
+        }).getOperatorList
+        if (!getOpList) { if (!cancelled) setImgCount(0); return }
+        const opList = await getOpList.call(pdfPage)
+        if (cancelled) return
+        const names = new Set<unknown>()
+        opList.fnArray.forEach((fn, i) => {
+          if (fn === paintImageOp) names.add(opList.argsArray[i]?.[0] ?? i)
+        })
+        imgCache.current.set(page, names.size)
+        setImgCount(names.size)
+      } catch {
+        if (!cancelled) setImgCount(0)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [view, page, numPages])
+
+  // ── Diccionario: buscar el significado de la palabra pulsada ─────────────
+  useEffect(() => {
+    if (!dictReq) {
+      setDictEntry(null)
+      setDictLoading(false)
+      setDictError(null)
+      return
+    }
+    let cancelled = false
+    setDictLoading(true)
+    setDictError(null)
+    setDictEntry(null)
+    lookupAt(dictReq.text, dictReq.offset).then(
+      entry => {
+        if (cancelled) return
+        setDictEntry(entry)
+        setDictLoading(false)
+      },
+      err => {
+        if (cancelled) return
+        setDictLoading(false)
+        setDictError(err instanceof DictNotFound
+          ? 'Sin definición para esta palabra'
+          : `No se pudo consultar el diccionario: ${errorMessage(err)}`)
+      },
+    )
+    return () => { cancelled = true }
+  }, [dictReq, dictNonce])
+
+  // El timer de pulsación larga no sobrevive al desmonte del lector.
+  useEffect(() => () => {
+    if (holdTimer.current != null) clearTimeout(holdTimer.current)
+  }, [])
+
+  // Un cambio de página/bloque invalida el menú/editor, la selección
+  // pendiente, el diccionario y las figuras expandidas
   useEffect(() => {
     setMenu(null)
     setNoteDraft(null)
     selectionRef.current = null
+    setDictReq(null)
+    setShowFigures(false)
     window.getSelection()?.removeAllRanges()
-  }, [page])
+  }, [page, block])
 
   const addHighlight = async (color: HighlightColor) => {
     const sel = selectionRef.current
@@ -539,14 +633,82 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     return () => { ro?.disconnect(); window.removeEventListener('resize', measure) }
   }, [])
 
+  // ── Pulsación larga: diccionario sobre la palabra (dedo o mouse) ─────────
+  // Mantener 550 ms quieto abre el significado; mover cancela (scroll,
+  // swipe o selección siguen intactos). La pulsación que abre —y el tap
+  // que cierra— no navegan ni abren el menú de resaltado.
+  const HOLD_MS = 550
+  const HOLD_SLOP = 12
+
+  const clearHold = () => {
+    if (holdTimer.current != null) { clearTimeout(holdTimer.current); holdTimer.current = null }
+    holdPoint.current = null
+  }
+
+  const fireHold = (x: number, y: number) => {
+    holdTimer.current = null
+    holdPoint.current = null
+    // las zonas de tap tapan el texto: se transparentan un instante para
+    // preguntar la palabra bajo el punto (sin pintar entre medias)
+    const stage = stageRef.current
+    const zones = stage ? Array.from(stage.querySelectorAll<HTMLElement>('.reader-zone')) : []
+    const prev = zones.map(z => z.style.pointerEvents)
+    zones.forEach(z => { z.style.pointerEvents = 'none' })
+    let found = null
+    try {
+      found = wordAtPoint(x, y)
+    } finally {
+      zones.forEach((z, i) => { z.style.pointerEvents = prev[i] })
+    }
+    if (!found || wordCandidates(found.text, found.offset).length === 0) return
+    dictHoldAt.current = Date.now()
+    window.getSelection()?.removeAllRanges() // que no abra el menú de resaltado
+    try { navigator.vibrate?.(10) } catch { /* sin vibración */ }
+    setDictReq({ x, y, text: found.text, offset: found.offset })
+  }
+
+  const startHold = (x: number, y: number) => {
+    clearHold()
+    holdPoint.current = { x, y }
+    holdTimer.current = setTimeout(() => fireHold(x, y), HOLD_MS)
+  }
+
+  const cancelHoldOnMove = (x: number, y: number) => {
+    const p = holdPoint.current
+    if (p && Math.hypot(x - p.x, y - p.y) > HOLD_SLOP) clearHold()
+  }
+
+  const closeDict = useCallback(() => {
+    dictClosedAt.current = Date.now()
+    setDictReq(null)
+  }, [])
+
+  const dictBusy = () => Date.now() - dictHoldAt.current < 1200 || Date.now() - dictClosedAt.current < 400
+
+  // Controles donde la pulsación larga no aplica (las zonas de tap sí: son
+  // transparentes al dedo y la palabra vive debajo de ellas).
+  const holdBlocked = (target: HTMLElement | null) =>
+    target?.closest?.('.bookmark-ribbon, .dict-popover, .selection-menu, .note-editor, .annotations-panel, input, select, textarea') != null
+
   // ── Selección de texto sobre el textLayer (mouseup con puntero fino) ──
   // Con puntero fino (mouse) las zonas de tap dejan de capturar los eventos
   // (CSS @media pointer:fine): este handler hace de zona de tap y de menú.
+  const onStageMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    if (holdBlocked(e.target as HTMLElement | null)) return
+    startHold(e.clientX, e.clientY)
+  }
+
+  const onStageMouseMove = (e: React.MouseEvent) => cancelHoldOnMove(e.clientX, e.clientY)
+
   const onStageMouseUp = (e: React.MouseEvent) => {
     if (e.button !== 0) return
+    clearHold()
     const target = e.target as HTMLElement | null
-    // controles propios (cinta, menú, editor, panel): su click no voltea
-    if (target?.closest?.('button, .selection-menu, .note-editor, .annotations-panel')) return
+    // controles propios (cinta, menú, editor, panel, diccionario): su click no voltea
+    if (target?.closest?.('button, .selection-menu, .note-editor, .annotations-panel, .dict-popover')) return
+    if (dictBusy()) return // la pulsación que abrió (o cerró) el diccionario no navega
+    if (dictReq) { closeDict(); return } // primer tap cierra el diccionario
     // un mouseup que cierra el menú (dismiss) no debe también voltear la página
     if (Date.now() - menuDismissedAt.current < 250) return
     const sel = window.getSelection()
@@ -600,8 +762,17 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.changedTouches[0]
     if (t) touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+    // un solo dedo quieto: arranca la pulsación larga del diccionario
+    if (e.touches.length === 1 && t && !holdBlocked(e.target as HTMLElement | null)) {
+      startHold(t.clientX, t.clientY)
+    }
+  }
+  const onTouchMove = (e: React.TouchEvent) => {
+    const t = e.touches[0]
+    if (t) cancelHoldOnMove(t.clientX, t.clientY)
   }
   const onTouchEnd = (e: React.TouchEvent) => {
+    clearHold()
     const start = touchStart.current
     touchStart.current = null
     if (!start) return
@@ -616,9 +787,12 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     }
   }
 
-  // Un tap sobre una zona justo después de un swipe no repite la vuelta.
+  // Un tap sobre una zona justo después de un swipe no repite la vuelta;
+  // tampoco navega la pulsación del diccionario ni el tap que lo cierra.
   const guardSwipe = (fn: () => void) => () => {
     if (Date.now() - swipedAt.current < 400) return
+    if (dictBusy()) return
+    if (dictReq) { closeDict(); return }
     fn()
   }
 
@@ -679,7 +853,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         </div>
       )}
 
-      <div className="reader-stage" ref={stageRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}
+      <div className="reader-stage" ref={stageRef} onTouchStart={onTouchStart} onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd} onMouseDown={onStageMouseDown} onMouseMove={onStageMouseMove}
         onMouseUp={onStageMouseUp}>
         {view === 'blocks' ? (
           <div className="block-screen" key={`${page}:${block}`}>
@@ -695,6 +870,19 @@ export default function PdfReader({ book, progress, onBack }: Props) {
                 </button>
               </div>
             )}
+            {imgCount !== null && imgCount > 0 && docRef.current && (
+              <div className="block-figures">
+                <button type="button" className="reader-tool block-figures-toggle" aria-expanded={showFigures}
+                  onClick={() => setShowFigures(v => !v)}>
+                  {showFigures
+                    ? 'Ocultar imágenes'
+                    : `Ver ${imgCount} ${imgCount === 1 ? 'imagen' : 'imágenes'} de la página`}
+                </button>
+                {showFigures && (
+                  <BlockPageFigure key={page} doc={docRef.current} page={page} night={night} />
+                )}
+              </div>
+            )}
             {activeParagraphs && !studyOn && (
               <article className="block-prose">
                 {activeParagraphs.map((p, i) => <p key={i}>{p}</p>)}
@@ -706,7 +894,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
                   <h2 className="study-head">Original</h2>
                   {activeParagraphs.map((p, i) => <p key={i}>{p}</p>)}
                 </article>
-                <article className="study-col study-trans">
+                <article className="study-col study-trans" lang={studyLang}>
                   <h2 className="study-head">Traducción · {studyLangLabel(studyLang)}</h2>
                   {translating && <p className="study-status">Traduciendo…</p>}
                   {transError && (
@@ -815,6 +1003,19 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         />
       )}
 
+      {dictReq && (
+        <DictPopover
+          x={dictReq.x}
+          y={dictReq.y}
+          word={wordCandidates(dictReq.text, dictReq.offset)[0] ?? ''}
+          entry={dictEntry}
+          loading={dictLoading}
+          error={dictError}
+          onRetry={() => setDictNonce(n => n + 1)}
+          onClose={closeDict}
+        />
+      )}
+
       {noteDraft && (
         <div className="note-anchor">
           <NoteEditor
@@ -827,5 +1028,41 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         </div>
       )}
     </div>
+  )
+}
+
+/** Render de la página original dentro de la vista bloques (para ver sus imágenes). */
+function BlockPageFigure({ doc, page, night }: { doc: PDFDocumentProxy; page: number; night: boolean }) {
+  const figureCanvas = useRef<HTMLCanvasElement | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const pdfPage = await doc.getPage(page)
+        if (cancelled) return
+        const base = pdfPage.getViewport({ scale: 1 })
+        const cssScale = 672 / base.width // ancho de la prosa
+        const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
+        const viewport = pdfPage.getViewport({ scale: cssScale * dpr })
+        const canvas = figureCanvas.current
+        const ctx = canvas?.getContext('2d')
+        if (!canvas || !ctx || cancelled) return
+        canvas.width = Math.round(viewport.width)
+        canvas.height = Math.round(viewport.height)
+        await pdfPage.render({ canvasContext: ctx, viewport }).promise
+        pdfPage.cleanup?.()
+      } catch {
+        /* si falla, la figura queda vacía */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [doc, page])
+
+  return (
+    <figure className="block-figure">
+      <canvas ref={figureCanvas} className={night ? 'night' : ''} aria-label={`Página ${page} original`} />
+      <figcaption>Página {page} original</figcaption>
+    </figure>
   )
 }

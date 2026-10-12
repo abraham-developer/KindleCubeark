@@ -265,7 +265,7 @@ describe('Library — carpetas', () => {
     expect(within(row).getByText('Estudio')).toBeInTheDocument()
   })
 
-  it('la vista Todos muestra solo libros sin carpeta', async () => {
+  it('la vista Todos muestra todos los libros sin importar la carpeta', async () => {
     apiSpies.push(...Object.values(mockApi({
       listBooks: vi.fn().mockResolvedValue([
         { ...books[0], folder_id: 'f1' },
@@ -274,8 +274,8 @@ describe('Library — carpetas', () => {
       listFolders: vi.fn().mockResolvedValue([folderA]),
     })))
     renderLibrary()
-    await screen.findByTestId('book-card-b2')
-    expect(screen.queryByTestId('book-card-b1')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('book-card-b1')).toBeInTheDocument()
+    expect(screen.getByTestId('book-card-b2')).toBeInTheDocument()
   })
 
   it('clic en una carpeta abre su vista con solo sus libros y botón Volver', async () => {
@@ -293,8 +293,8 @@ describe('Library — carpetas', () => {
     expect(screen.getByRole('button', { name: /volver/i })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /volver/i }))
-    expect(await screen.findByTestId('book-card-b2')).toBeInTheDocument()
-    expect(screen.queryByTestId('book-card-b1')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('book-card-b1')).toBeInTheDocument()
+    expect(screen.getByTestId('book-card-b2')).toBeInTheDocument()
   })
 
   it('el menú del libro mueve a una carpeta (relevo del drag & drop)', async () => {

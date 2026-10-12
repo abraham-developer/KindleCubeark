@@ -7,11 +7,13 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { getDocument } from 'pdfjs-dist'
 import { api, type Book, type Position } from '../api'
 import { mockApi, stubBrowser } from './mocks'
+import { clearDictionaryCache } from '../lib/dictionary'
 import Reader from '../reader/Reader'
 
 vi.mock('pdfjs-dist', () => ({
   getDocument: vi.fn(),
   GlobalWorkerOptions: { workerSrc: '' },
+  OPS: { paintImageXObject: 999 },
   TextLayer: class {
     constructor(public options: unknown) {}
     async render() { /* jsdom no pinta */ }
@@ -93,6 +95,7 @@ beforeEach(() => {
     getViewport: vi.fn(() => ({ width: 600, height: 800 })),
     render: vi.fn(() => ({ promise: Promise.resolve() })),
     getTextContent: vi.fn(async () => ({ items: pageTextItems() })),
+    getOperatorList: vi.fn(async () => ({ fnArray: [], argsArray: [] })),
     cleanup: vi.fn(),
   }))
   const doc = { numPages: NUM_PAGES, getPage, destroy: vi.fn(async () => {}) }
@@ -101,6 +104,9 @@ beforeEach(() => {
 
 afterEach(() => {
   window.localStorage.clear()
+  clearDictionaryCache()
+  vi.unstubAllGlobals()
+  delete (document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint
   for (const s of apiSpies) s.mockRestore()
   apiSpies.length = 0
   vi.clearAllMocks()
@@ -160,5 +166,65 @@ describe('PdfReader por bloques', () => {
     expect(await screen.findByText('Bloque 1 de 3')).toBeInTheDocument()
     expect(screen.queryByText('Traducción · Inglés')).not.toBeInTheDocument()
     expect(translate).not.toHaveBeenCalled()
+  })
+
+  it('pulsación larga sobre una palabra abre el diccionario sin navegar', async () => {
+    const fetchStub = vi.fn(async (url: string) => {
+      if (url.includes('prop=sections')) {
+        return new Response(JSON.stringify({ parse: { sections: [
+          { index: '1', level: '2', line: 'Español' },
+          { index: '2', level: '3', line: 'Sustantivo femenino' },
+        ] } }), { status: 200 })
+      }
+      if (url.includes('prop=text')) {
+        return new Response(JSON.stringify({
+          parse: { text: { '*': '<dl><dt>1</dt><dd>Lugar con plantas.</dd></dl>' } },
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchStub)
+    renderReader({ position: { page: 7 }, percent: '70' })
+
+    // caret bajo el punto: offset 2 del texto («Línea 01: …»)
+    const para = await screen.findByText(/Línea 01:/)
+    const range = document.createRange()
+    range.setStart(para.firstChild as Text, 2)
+    range.collapse(true)
+    ;(document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint = () => range
+
+    const stage = document.querySelector('.reader-stage') as HTMLElement
+    fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
+    expect(await screen.findByRole('dialog', { name: /significado de línea/i }, { timeout: 3000 }))
+      .toBeInTheDocument()
+    expect(await screen.findByText('Lugar con plantas.')).toBeInTheDocument()
+
+    // el mouseup que suelta la pulsación no navega: sigue el bloque 1
+    fireEvent.mouseUp(stage, { button: 0, clientX: 100, clientY: 100 })
+    expect(screen.getByText('Bloque 1 de 3')).toBeInTheDocument()
+    expect(fetchStub).toHaveBeenCalled()
+  })
+
+  it('página con imágenes ofrece verlas inline sin salir de bloques', async () => {
+    // la misma imagen pintada dos veces cuenta una sola vez
+    getPage.mockImplementation(async (n: number) => ({
+      pageNumber: n,
+      getViewport: vi.fn(() => ({ width: 600, height: 800 })),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getTextContent: vi.fn(async () => ({ items: pageTextItems() })),
+      getOperatorList: vi.fn(async () => ({
+        fnArray: [999, 999, 5],
+        argsArray: [['img-paisaje'], ['img-paisaje'], []],
+      })),
+      cleanup: vi.fn(),
+    }))
+    renderReader({ position: { page: 7 }, percent: '70' })
+
+    const toggle = await screen.findByRole('button', { name: /ver 1 imagen de la página/i })
+    fireEvent.click(toggle)
+    expect(await screen.findByText('Página 7 original')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /ocultar imágenes/i }))
+    expect(screen.queryByText('Página 7 original')).not.toBeInTheDocument()
   })
 })

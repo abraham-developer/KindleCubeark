@@ -66,6 +66,9 @@ describe('translate', () => {
     const res = await postTranslate(app, cookie, { q: 'Hola mundo', target: 'en' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ translated_text: 'Hello world' })
+    // el español también es destino válido (leer en otro idioma)
+    const resEs = await postTranslate(app, cookie, { q: 'Hello world', target: 'es' })
+    expect(resEs.statusCode).toBe(200)
     expect(fetchMock).toHaveBeenCalledWith(
       'http://translate:5000/translate',
       expect.objectContaining({ method: 'POST' }),
