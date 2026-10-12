@@ -19,6 +19,8 @@ services:
       DB_NAME: kindle
       DB_PASSWORD_FILE: /run/secrets/kindle_db_password
       SESSION_SECRET_FILE: /run/secrets/kindle_session_secret
+      # motor del modo estudio bilingüe (servicio translate de este stack)
+      LIBRETRANSLATE_URL: http://translate:5000
     secrets:
       - kindle_db_password
       - kindle_session_secret
@@ -89,6 +91,34 @@ services:
         condition: on-failure
         delay: 5s
         max_attempts: 3
+
+  # LibreTranslate autohospedado (open source, offline): motor del modo
+  # estudio bilingüe. Solo en la red interna (sin puertos publicados):
+  # únicamente el app le pega por http://translate:5000. Carga solo
+  # inglés, español, alemán y chino (el español es el origen típico).
+  # Nota: el primer arranque descarga los modelos (~minutos).
+  translate:
+    image: libretranslate/libretranslate
+    command: --load-only en,es,de,zh
+    networks:
+      - internal
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      resources:
+        limits:
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 10s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:5000/languages')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 3
 
 secrets:
   kindle_db_password:
