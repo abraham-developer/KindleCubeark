@@ -1,7 +1,9 @@
-// apps/web/src/pages/Library.tsx — biblioteca: grilla, seguir leyendo, subida y menú contextual (Task 11).
+// apps/web/src/pages/Library.tsx — biblioteca estilo estantería: pestaña «Mis libros»
+// (grilla de estantes, seguir leyendo, subida personal/global y menú contextual)
+// y pestaña «Biblioteca global» (libros compartidos con búsqueda y adopción).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type Book, type Folder } from '../api'
+import { api, type Book, type Folder, type Visibility } from '../api'
 import { useAuth } from '../state/AuthContext'
 import FolderDialog from './FolderDialog'
 
@@ -104,7 +106,77 @@ function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onDelete }: {
   )
 }
 
-function BookCard({ book, folders, onMove, onReset, onDelete }: {
+// ── Estantería ─────────────────────────────────────────────────────────────
+// Los libros se agrupan en filas (tantas columnas como quepan según el ancho
+// medido) y cada fila lleva su tabla de madera debajo. La altura de cada lomo
+// varía por hash del id para el look de estante real; el ancho sale de la
+// proporción 2/3 y es el mismo en el estante y en su etiqueta.
+const SHELF_HEIGHTS = [172, 192, 208, 182, 200, 164]
+
+function shelfHeight(id: string): number {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return SHELF_HEIGHTS[h % SHELF_HEIGHTS.length]
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
+function ShelfGrid({ books, renderStand, renderCaption }: {
+  books: Book[]
+  renderStand: (book: Book) => React.ReactNode
+  renderCaption: (book: Book) => React.ReactNode
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  // jsdom no mide (clientWidth 0): 4 columnas de relevo para que todo se vea
+  const [cols, setCols] = useState(4)
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const measure = () => {
+      const w = el.clientWidth
+      if (!w) { setCols(4); return }
+      setCols(Math.max(2, Math.min(6, Math.floor((w + 16) / (150 + 16)))))
+    }
+    measure()
+    let ro: ResizeObserver | undefined
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(measure)
+      ro.observe(el)
+    }
+    window.addEventListener('resize', measure)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', measure) }
+  }, [])
+  const rows = useMemo(() => chunk(books, Math.max(cols, 1)), [books, cols])
+  return (
+    <div className="shelves" ref={wrapRef}>
+      {rows.map((row, i) => (
+        <div className="shelf-row" key={i}>
+          <div className="shelf-stands">
+            {row.map(b => (
+              <div className="shelf-stand" key={b.id} style={{ '--book-h': `${shelfHeight(b.id)}px` } as React.CSSProperties}>
+                {renderStand(b)}
+              </div>
+            ))}
+          </div>
+          <div className="shelf-plank" aria-hidden="true" />
+          <div className="shelf-captions">
+            {row.map(b => (
+              <div className="shelf-caption" key={b.id} style={{ '--book-h': `${shelfHeight(b.id)}px` } as React.CSSProperties}>
+                {renderCaption(b)}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function MineStand({ book, folders, onMove, onReset, onDelete }: {
   book: Book
   folders: Folder[]
   onMove: (bookId: string, folderId: string | null) => Promise<void>
@@ -113,15 +185,9 @@ function BookCard({ book, folders, onMove, onReset, onDelete }: {
 }) {
   const navigate = useNavigate()
   const open = () => navigate(`/reader/${book.id}`)
-  const pct = book.percent == null ? 0 : Number(book.percent)
-  const pagesLabel = book.format === 'pdf' && book.total_pages != null
-    && book.position && 'page' in book.position && pct > 0
-    ? `Pág. ${book.position.page} de ${book.total_pages}`
-    : null
-  const size = fileSizeLabel(book.file_size)
-
   return (
-    <article className="book-card" data-testid={`book-card-${book.id}`}
+    <article className="book-card shelf-book" data-testid={`book-card-${book.id}`}
+      style={{ '--book-h': `${shelfHeight(book.id)}px` } as React.CSSProperties}
       draggable
       onDragStart={e => {
         // HTML5 DnD nativo (desktop); el menú «Mover a…» es el relevo accesible/táctil
@@ -129,19 +195,73 @@ function BookCard({ book, folders, onMove, onReset, onDelete }: {
         e.dataTransfer.setData('text/plain', book.id)
         e.dataTransfer.effectAllowed = 'move'
       }}>
-      <button type="button" className="book-cover" onClick={open} aria-label={`Abrir ${book.title}`}>
+      <button type="button" className="book-cover shelf-cover" onClick={open} aria-label={`Abrir ${book.title}`}>
         <Cover book={book} />
+        <span className="spine" aria-hidden="true" />
       </button>
       <ConfirmMenu book={book} folders={folders} onContinue={open} onReset={() => onReset(book)}
         onMove={folderId => onMove(book.id, folderId)} onDelete={() => onDelete(book)} />
-      <div className="book-meta">
-        <h3 className="book-title">{book.title}</h3>
-        <p className="book-author">{book.author}</p>
-        <ProgressBar value={pct} />
-        {pagesLabel && <span className="book-pages">{pagesLabel}</span>}
-        {size && <span className="book-size">{size}</span>}
-      </div>
+      {book.visibility === 'global' && <span className="badge-global" title="Este libro lo compartes con todos">Global</span>}
     </article>
+  )
+}
+
+function MineCaption({ book }: { book: Book }) {
+  const pct = book.percent == null ? 0 : Number(book.percent)
+  const pagesLabel = book.format === 'pdf' && book.total_pages != null
+    && book.position && 'page' in book.position && pct > 0
+    ? `Pág. ${book.position.page} de ${book.total_pages}`
+    : null
+  const size = fileSizeLabel(book.file_size)
+  return (
+    <div className="book-meta">
+      <h3 className="book-title">{book.title}</h3>
+      <p className="book-author">{book.author}</p>
+      <ProgressBar value={pct} />
+      {pagesLabel && <span className="book-pages">{pagesLabel}</span>}
+      {size && <span className="book-size">{size}</span>}
+    </div>
+  )
+}
+
+function GlobalStand({ book }: { book: Book }) {
+  const navigate = useNavigate()
+  return (
+    <article className="book-card shelf-book" data-testid={`global-card-${book.id}`}
+      style={{ '--book-h': `${shelfHeight(book.id)}px` } as React.CSSProperties}>
+      <button type="button" className="book-cover shelf-cover" onClick={() => navigate(`/reader/${book.id}`)}
+        aria-label={`Leer ${book.title}`}>
+        <Cover book={book} />
+        <span className="spine" aria-hidden="true" />
+      </button>
+      <span className="badge-global" title={book.owner_email ? `Compartido por ${book.owner_email}` : 'Libro global'}>Global</span>
+    </article>
+  )
+}
+
+function GlobalCaption({ book, adopted, adopting, onAdopt }: {
+  book: Book
+  adopted: boolean
+  adopting: boolean
+  onAdopt: (b: Book) => void
+}) {
+  const pct = book.percent == null ? 0 : Number(book.percent)
+  const mine = adopted || book.is_mine
+  return (
+    <div className="book-meta">
+      <h3 className="book-title">{book.title}</h3>
+      <p className="book-author">{book.author}</p>
+      {book.owner_email && <p className="book-owner">de {book.owner_email}</p>}
+      {book.last_read && <ProgressBar value={pct} />}
+      {mine
+        ? <span className="book-adopted">En tu biblioteca</span>
+        : (
+          <button type="button" className="btn btn-primary btn-adopt" disabled={adopting}
+            onClick={() => onAdopt(book)}>
+            {adopting ? 'Añadiendo…' : '+ Añadir a mi biblioteca'}
+          </button>
+        )}
+    </div>
   )
 }
 
@@ -215,9 +335,11 @@ function FolderCard({ folder, active, onOpen, onEdit, onDelete, onDropBook }: {
   )
 }
 
-/** Botón + zona de arrastrar y soltar para subir libros. */
-function AddBookControl({ uploading, onFile }: {
+/** Botón + zona de arrastrar y soltar para subir libros, con alcance personal/global. */
+function AddBookControl({ uploading, visibility, onVisibility, onFile }: {
   uploading: { name: string; progress: number } | null
+  visibility: Visibility
+  onVisibility: (v: Visibility) => void
   onFile: (file: File) => Promise<void>
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -235,6 +357,18 @@ function AddBookControl({ uploading, onFile }: {
       <div className="add-book-row">
         <button type="button" className="btn btn-primary" disabled={!!uploading}
           onClick={() => inputRef.current?.click()}>Añadir libro</button>
+        <div className="seg" role="group" aria-label="Quién puede ver el libro">
+          <button type="button" className="reader-tool" aria-pressed={visibility === 'personal'}
+            disabled={!!uploading} onClick={() => onVisibility('personal')}
+            title="Solo tú verás este libro">
+            Solo para mí
+          </button>
+          <button type="button" className="reader-tool" aria-pressed={visibility === 'global'}
+            disabled={!!uploading} onClick={() => onVisibility('global')}
+            title="Todos podrán verlo y añadirlo a su biblioteca">
+            Para todos
+          </button>
+        </div>
         <input ref={inputRef} type="file" accept={ACCEPT} aria-label="Elegir archivo para subir" className="visually-hidden"
           onChange={async e => {
             const file = e.target.files?.[0]
@@ -247,6 +381,7 @@ function AddBookControl({ uploading, onFile }: {
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}>
         Arrastra un PDF o EPUB aquí para agregarlo
+        {visibility === 'global' ? ' (visible para todos)' : ' (solo para ti)'}
       </div>
       {uploading && (
         <div className="upload-bar">
@@ -307,11 +442,21 @@ export default function Library() {
   const [query, setQuery] = useState('')
   const [order, setOrder] = useState<'reciente' | 'titulo'>('reciente')
   const [uploading, setUploading] = useState<{ name: string; progress: number } | null>(null)
+  const [visibility, setVisibility] = useState<Visibility>('personal')
   const [folders, setFolders] = useState<Folder[]>([])
   const [foldersFailed, setFoldersFailed] = useState(false)
   const [allOver, setAllOver] = useState(false)
   const [activeFolderId, setActiveFolderId] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ kind: 'new' } | { kind: 'edit'; folder: Folder } | null>(null)
+  // pestaña global: se carga perezosa al abrirla por primera vez
+  const [tab, setTab] = useState<'mine' | 'global'>('mine')
+  const [globalBooks, setGlobalBooks] = useState<Book[]>([])
+  const [globalLoaded, setGlobalLoaded] = useState(false)
+  const [globalLoading, setGlobalLoading] = useState(false)
+  const [globalError, setGlobalError] = useState<string | null>(null)
+  const [globalQuery, setGlobalQuery] = useState('')
+  const [adopting, setAdopting] = useState<string | null>(null)
+  const [adopted, setAdopted] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     try {
@@ -339,6 +484,15 @@ export default function Library() {
   }, [])
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    if (tab !== 'global' || globalLoaded) return
+    setGlobalLoading(true)
+    api.listGlobalBooks()
+      .then(rows => { setGlobalBooks(rows); setGlobalError(null) })
+      .catch(err => setGlobalError(`No se pudo cargar la biblioteca global: ${errorMessage(err)}`))
+      .finally(() => { setGlobalLoading(false); setGlobalLoaded(true) })
+  }, [tab, globalLoaded])
+
   const continueBook = useMemo(() => {
     return books.reduce<Book | null>((best, b) => {
       if (!b.last_read) return best
@@ -360,6 +514,14 @@ export default function Library() {
     return order === 'titulo' ? [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'es')) : filtered
   }, [books, query, order, activeFolderId, foldersFailed])
 
+  const globalVisible = useMemo(() => {
+    const q = globalQuery.trim().toLowerCase()
+    if (!q) return globalBooks
+    return globalBooks.filter(b =>
+      b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) ||
+      (b.owner_email ?? '').toLowerCase().includes(q))
+  }, [globalBooks, globalQuery])
+
   const activeFolder = activeFolderId == null ? null : folders.find(f => f.id === activeFolderId) ?? null
 
   const moveBook = useCallback(async (bookId: string, folderId: string | null) => {
@@ -373,6 +535,21 @@ export default function Library() {
     }
   }, [load])
 
+  const adopt = useCallback(async (book: Book) => {
+    setNotice(null)
+    setAdopting(book.id)
+    try {
+      await api.adoptBook(book.id)
+      setAdopted(prev => new Set(prev).add(book.id))
+      setNotice(`«${book.title}» se añadió a tu biblioteca.`)
+      await load() // mi estante ya incluye la copia
+    } catch (err) {
+      setNotice(`No se pudo añadir el libro: ${errorMessage(err)}`)
+    } finally {
+      setAdopting(null)
+    }
+  }, [load])
+
   const handleFile = async (file: File) => {
     setNotice(null)
     if (!/\.(pdf|epub)$/i.test(file.name)) {
@@ -381,7 +558,7 @@ export default function Library() {
     }
     setUploading({ name: file.name, progress: 0 })
     try {
-      const created = await api.uploadBook(file, p => setUploading(u => u ? { ...u, progress: p } : u))
+      const created = await api.uploadBook(file, p => setUploading(u => u ? { ...u, progress: p } : u), visibility)
       if (created.format === 'pdf') {
         try {
           const blob = await makePdfCover(file)
@@ -401,14 +578,18 @@ export default function Library() {
   return (
     <main className="library">
       <header className="lib-top">
-        <h1>Mi biblioteca</h1>
+        <h1>{tab === 'mine' ? 'Mi biblioteca' : 'Biblioteca global'}</h1>
         <div className="lib-tools">
-          <input type="search" aria-label="Buscar" placeholder="Buscar por título o autor"
-            value={query} onChange={e => setQuery(e.target.value)} />
-          <select aria-label="Orden" value={order} onChange={e => setOrder(e.target.value as 'reciente' | 'titulo')}>
-            <option value="reciente">Reciente</option>
-            <option value="titulo">Título</option>
-          </select>
+          {tab === 'mine' && (
+            <>
+              <input type="search" aria-label="Buscar" placeholder="Buscar por título o autor"
+                value={query} onChange={e => setQuery(e.target.value)} />
+              <select aria-label="Orden" value={order} onChange={e => setOrder(e.target.value as 'reciente' | 'titulo')}>
+                <option value="reciente">Reciente</option>
+                <option value="titulo">Título</option>
+              </select>
+            </>
+          )}
           <button type="button" className="btn" aria-label="Cerrar sesión"
             onClick={() => { void signOut().finally(() => navigate('/login')) }}>
             Salir
@@ -416,111 +597,149 @@ export default function Library() {
         </div>
       </header>
 
+      <div className="lib-tabs" role="tablist" aria-label="Bibliotecas">
+        <button type="button" role="tab" aria-selected={tab === 'mine'}
+          className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>
+          Mis libros
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'global'}
+          className={tab === 'global' ? 'active' : ''} onClick={() => setTab('global')}>
+          Biblioteca global
+        </button>
+      </div>
+
       {error && <p role="alert" className="lib-alert">{error}</p>}
       {notice && <p role="alert" className="lib-alert">{notice}</p>}
 
-      {/* con carpetas caídas se oculta la fila: sin carpetas conocidas el filtro sería una trampa */}
-      {!foldersFailed && (
-      <section className="folder-row-wrap" data-testid="folder-row" aria-label="Carpetas">
-        <div className="folder-row">
-          <button type="button" className={`folder-card all ${activeFolderId == null ? 'active' : ''} ${allOver ? 'drag-over' : ''}`}
-            data-testid="folder-card-all"
-            onClick={() => setActiveFolderId(null)}
-            onDragOver={e => { e.preventDefault(); setAllOver(true) }}
-            onDragLeave={() => setAllOver(false)}
-            onDrop={e => {
-              e.preventDefault(); setAllOver(false)
-              const id = e.dataTransfer?.getData('text/book-id') || e.dataTransfer?.getData('text/plain')
-              if (id) void moveBook(id, null)
-            }}>
-            Todos
-          </button>
-          {folders.map(f => (
-            <FolderCard key={f.id} folder={f} active={f.id === activeFolderId}
-              onOpen={() => setActiveFolderId(f.id)}
-              onEdit={() => setEditing({ kind: 'edit', folder: f })}
-              onDropBook={bookId => void moveBook(bookId, f.id)}
-              onDelete={async () => {
-                setNotice(null)
-                try {
-                  await api.deleteFolder(f.id)
-                  if (activeFolderId === f.id) setActiveFolderId(null)
-                  await load()
-                } catch (err) {
-                  setNotice(`No se pudo eliminar la carpeta: ${errorMessage(err)}`)
-                }
-              }} />
-          ))}
-          <button type="button" className="folder-card new" data-testid="new-folder"
-            onClick={() => setEditing({ kind: 'new' })}>+ Nueva carpeta</button>
-        </div>
-      </section>
-      )}
-
-      {activeFolder && (
-        <div className="folder-view-head">
-          <span className="folder-swatch" style={{ '--folder-color': activeFolder.color } as React.CSSProperties} aria-hidden="true" />
-          <h2>{activeFolder.name}</h2>
-          <button type="button" className="btn" onClick={() => setActiveFolderId(null)}>Volver a todos</button>
-        </div>
-      )}
-
-      {continueBook && (
-        <section className="continue" data-testid="continue-reading" aria-label="Seguir leyendo">
-          <div className="continue-cover"><Cover book={continueBook} /></div>
-          <div className="continue-info">
-            <p className="eyebrow">Seguir leyendo</p>
-            <h2 className="continue-title">{continueBook.title}</h2>
-            <p className="continue-meta">{continueBook.author}</p>
-            <ProgressBar value={continueBook.percent == null ? 0 : Number(continueBook.percent)} />
+      {tab === 'global' ? (
+        <section aria-label="Libros compartidos por todos">
+          <div className="lib-tools global-search">
+            <input type="search" aria-label="Buscar en la biblioteca global" placeholder="Buscar por título, autor o quién lo compartió"
+              value={globalQuery} onChange={e => setGlobalQuery(e.target.value)} />
           </div>
-          <button type="button" className="btn btn-primary" onClick={() => navigate(`/reader/${continueBook.id}`)}>Continuar</button>
+          {globalLoading && <div className="page-center">Cargando…</div>}
+          {globalError && <p role="alert" className="lib-alert">{globalError}</p>}
+          {!globalLoading && !globalError && globalVisible.length === 0 && (
+            <div className="empty-state">
+              {globalQuery
+                ? (<><h2>Sin resultados</h2><p>Ningún libro global coincide con «{globalQuery.trim()}».</p></>)
+                : (<><h2>Aún no hay libros globales</h2><p>Cuando alguien suba un libro «Para todos» aparecerá aquí para leerlo o añadirlo a tu biblioteca.</p></>)}
+            </div>
+          )}
+          {!globalLoading && !globalError && globalVisible.length > 0 && (
+            <ShelfGrid books={globalVisible}
+              renderStand={b => <GlobalStand book={b} />}
+              renderCaption={b => (
+                <GlobalCaption book={b} adopted={adopted.has(b.id)} adopting={adopting === b.id} onAdopt={adopt} />
+              )} />
+          )}
         </section>
+      ) : (
+        <>
+          {/* con carpetas caídas se oculta la fila: sin carpetas conocidas el filtro sería una trampa */}
+          {!foldersFailed && (
+          <section className="folder-row-wrap" data-testid="folder-row" aria-label="Carpetas">
+            <div className="folder-row">
+              <button type="button" className={`folder-card all ${activeFolderId == null ? 'active' : ''} ${allOver ? 'drag-over' : ''}`}
+                data-testid="folder-card-all"
+                onClick={() => setActiveFolderId(null)}
+                onDragOver={e => { e.preventDefault(); setAllOver(true) }}
+                onDragLeave={() => setAllOver(false)}
+                onDrop={e => {
+                  e.preventDefault(); setAllOver(false)
+                  const id = e.dataTransfer?.getData('text/book-id') || e.dataTransfer?.getData('text/plain')
+                  if (id) void moveBook(id, null)
+                }}>
+                Todos
+              </button>
+              {folders.map(f => (
+                <FolderCard key={f.id} folder={f} active={f.id === activeFolderId}
+                  onOpen={() => setActiveFolderId(f.id)}
+                  onEdit={() => setEditing({ kind: 'edit', folder: f })}
+                  onDropBook={bookId => void moveBook(bookId, f.id)}
+                  onDelete={async () => {
+                    setNotice(null)
+                    try {
+                      await api.deleteFolder(f.id)
+                      if (activeFolderId === f.id) setActiveFolderId(null)
+                      await load()
+                    } catch (err) {
+                      setNotice(`No se pudo eliminar la carpeta: ${errorMessage(err)}`)
+                    }
+                  }} />
+              ))}
+              <button type="button" className="folder-card new" data-testid="new-folder"
+                onClick={() => setEditing({ kind: 'new' })}>+ Nueva carpeta</button>
+            </div>
+          </section>
+          )}
+
+          {activeFolder && (
+            <div className="folder-view-head">
+              <span className="folder-swatch" style={{ '--folder-color': activeFolder.color } as React.CSSProperties} aria-hidden="true" />
+              <h2>{activeFolder.name}</h2>
+              <button type="button" className="btn" onClick={() => setActiveFolderId(null)}>Volver a todos</button>
+            </div>
+          )}
+
+          {continueBook && (
+            <section className="continue" data-testid="continue-reading" aria-label="Seguir leyendo">
+              <div className="continue-cover"><Cover book={continueBook} /></div>
+              <div className="continue-info">
+                <p className="eyebrow">Seguir leyendo</p>
+                <h2 className="continue-title">{continueBook.title}</h2>
+                <p className="continue-meta">{continueBook.author}</p>
+                <ProgressBar value={continueBook.percent == null ? 0 : Number(continueBook.percent)} />
+              </div>
+              <button type="button" className="btn btn-primary" onClick={() => navigate(`/reader/${continueBook.id}`)}>Continuar</button>
+            </section>
+          )}
+
+          {visible.length === 0
+            ? (
+              <div className="empty-state">
+                {activeFolder
+                  ? (
+                    <>
+                      <h2>Todavía no hay libros en esta carpeta</h2>
+                      <p>Arrastra un libro hasta la carpeta o usa el menú del libro para moverlo aquí.</p>
+                    </>
+                  )
+                  : (
+                    <>
+                      <h2>Todavía no tienes libros</h2>
+                      <p>Añade el primero con «Añadir libro» o arrastrando un PDF o EPUB a la zona de subida.</p>
+                    </>
+                  )}
+              </div>
+            )
+            : (
+              <ShelfGrid books={visible}
+                renderStand={b => (
+                  <MineStand book={b} folders={folders} onMove={moveBook}
+                    onReset={async book => {
+                      try {
+                        await api.resetProgress(book.id)
+                        await load()
+                      } catch (err) {
+                        setNotice(`No se pudo reiniciar el progreso: ${errorMessage(err)}`)
+                      }
+                    }}
+                    onDelete={async book => {
+                      try {
+                        await api.deleteBook(book.id)
+                        await load()
+                      } catch (err) {
+                        setNotice(`No se pudo eliminar el libro: ${errorMessage(err)}`)
+                      }
+                    }} />
+                )}
+                renderCaption={b => <MineCaption book={b} />} />
+            )}
+
+          <AddBookControl uploading={uploading} visibility={visibility} onVisibility={setVisibility} onFile={handleFile} />
+        </>
       )}
-
-      {visible.length === 0
-        ? (
-          <div className="empty-state">
-            {activeFolder
-              ? (
-                <>
-                  <h2>Todavía no hay libros en esta carpeta</h2>
-                  <p>Arrastra un libro hasta la carpeta o usa el menú del libro para moverlo aquí.</p>
-                </>
-              )
-              : (
-                <>
-                  <h2>Todavía no tienes libros</h2>
-                  <p>Añade el primero con «Añadir libro» o arrastrando un PDF o EPUB a la zona de subida.</p>
-                </>
-              )}
-          </div>
-        )
-        : (
-          <div className="grid">
-            {visible.map(b => (
-              <BookCard key={b.id} book={b} folders={folders} onMove={moveBook}
-                onReset={async book => {
-                  try {
-                    await api.resetProgress(book.id)
-                    await load()
-                  } catch (err) {
-                    setNotice(`No se pudo reiniciar el progreso: ${errorMessage(err)}`)
-                  }
-                }}
-                onDelete={async book => {
-                  try {
-                    await api.deleteBook(book.id)
-                    await load()
-                  } catch (err) {
-                    setNotice(`No se pudo eliminar el libro: ${errorMessage(err)}`)
-                  }
-                }} />
-            ))}
-          </div>
-        )}
-
-      <AddBookControl uploading={uploading} onFile={handleFile} />
 
       {editing && (
         <FolderDialog folder={editing.kind === 'edit' ? editing.folder : null}

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { createReadStream } from 'node:fs'
-import { stat, rm } from 'node:fs/promises'
+import { stat, rm, readFile } from 'node:fs/promises'
 import type { FastifyInstance } from 'fastify'
 import { detectFormat } from '../lib/magic.js'
 import { extractMeta } from '../lib/metadata.js'
@@ -18,10 +18,15 @@ interface BookRow {
   file_size: string | number
   total_pages: number | null
   added_at: string
+  folder_id: string | null
+  visibility: string
   // solo en la lista (JOIN con reading_progress)
   percent?: string | null
   position?: unknown
   last_read?: string | null
+  // solo en la lista global (JOIN con users)
+  owner_email?: string
+  is_mine?: boolean
 }
 
 type ClientBook = Omit<BookRow, 'file_path' | 'cover_path'> & {
@@ -55,18 +60,36 @@ export default async function bookRoutes(app: FastifyInstance) {
   })
 
   app.post('/api/books', { preHandler: app.verifySession }, async (req, reply) => {
-    const file = await req.file({ limits: { fileSize: app.config.maxUploadMb * 1024 * 1024 } })
-    if (!file) return reply.code(400).send({ message: 'Falta el archivo' })
-    const chunks: Buffer[] = []
-    await new Promise<void>((resolve) => {
-      file.file.on('data', (c: Buffer) => { chunks.push(c) })
-      file.file.on('end', resolve)
-      file.file.on('error', resolve)
-    })
-    // busboy marca el stream al cortar por limits.fileSize (el evento 'limit'
-    // puede dispararse antes de que este handler lo escuche)
-    if (file.file.truncated) return reply.code(400).send({ message: 'El archivo excede el tamaño máximo' })
-    const buf = Buffer.concat(chunks)
+    // parts() en vez de file(): además del archivo se lee el campo
+    // 'visibility' (personal|global). También se acepta ?visibility=global.
+    const limit = app.config.maxUploadMb * 1024 * 1024
+    let visibility = (req.query as { visibility?: unknown } | undefined)?.visibility === 'global'
+      ? 'global' : 'personal'
+    let filename: string | undefined
+    let buf: Buffer | null = null
+    let truncated = false
+    for await (const part of req.parts({ limits: { fileSize: limit } })) {
+      if (part.type === 'file' && part.fieldname === 'file' && buf === null) {
+        filename = part.filename
+        const chunks: Buffer[] = []
+        await new Promise<void>((resolve) => {
+          part.file.on('data', (c: Buffer) => { chunks.push(c) })
+          part.file.on('end', resolve)
+          part.file.on('error', resolve)
+        })
+        // busboy marca el stream al cortar por limits.fileSize (el evento 'limit'
+        // puede dispararse antes de que este handler lo escuche)
+        truncated = truncated || (part.file as { truncated?: boolean }).truncated === true
+        buf = Buffer.concat(chunks)
+      } else if (part.type === 'field' && part.fieldname === 'visibility' && typeof part.value === 'string') {
+        // valor inválido → se ignora y queda personal
+        if (part.value === 'global' || part.value === 'personal') visibility = part.value
+      } else if (part.type === 'file') {
+        part.file.resume() // parte inesperada: drenar para no colgar busboy
+      }
+    }
+    if (buf === null) return reply.code(400).send({ message: 'Falta el archivo' })
+    if (truncated) return reply.code(400).send({ message: 'El archivo excede el tamaño máximo' })
 
     // validación solo por magic bytes: si falla, no se escribe nada en disco
     const format = detectFormat(buf)
@@ -86,9 +109,9 @@ export default async function bookRoutes(app: FastifyInstance) {
         ? await saveCover(app.config.dataDir, req.user!.id, id, meta.coverJpeg)
         : null
       const { rows } = await app.query<BookRow>(
-        `INSERT INTO books (id, user_id, title, author, format, file_path, cover_path, file_size, total_pages)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-        [id, req.user!.id, meta.title ?? file.filename ?? 'Sin título', meta.author ?? '', format, filePath, coverPath, buf.length, meta.pages ?? null],
+        `INSERT INTO books (id, user_id, title, author, format, file_path, cover_path, file_size, total_pages, visibility)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [id, req.user!.id, meta.title ?? filename ?? 'Sin título', meta.author ?? '', format, filePath, coverPath, buf.length, meta.pages ?? null, visibility],
       )
       return reply.code(201).send(toClient(rows[0]))
     } catch (e) {
@@ -108,10 +131,30 @@ export default async function bookRoutes(app: FastifyInstance) {
     return rows.map(toClient)
   })
 
+  // biblioteca global: libros visibility='global' de todos los usuarios,
+  // con el progreso PROPIO del lector (cada quien retoma donde iba).
+  // ?q= filtra por título o autor (case-insensitive).
+  app.get('/api/books/global', { preHandler: app.verifySession }, async (req) => {
+    const q = String((req.query as { q?: unknown } | undefined)?.q ?? '').trim().slice(0, 80)
+    const like = `%${q.replace(/[\\%_]/g, m => `\\${m}`)}%`
+    const { rows } = await app.query<BookRow>(
+      `SELECT b.*, u.email AS owner_email, (b.user_id = $1) AS is_mine,
+              p.percent, p.position, p.updated_at AS last_read
+       FROM books b JOIN users u ON u.id = b.user_id
+       LEFT JOIN reading_progress p ON p.book_id = b.id AND p.user_id = $1
+       WHERE b.visibility = 'global' AND ($2 = '%%' OR b.title ILIKE $2 ESCAPE '\\' OR b.author ILIKE $2 ESCAPE '\\')
+       ORDER BY b.added_at DESC LIMIT 100`,
+      [req.user!.id, like],
+    )
+    return rows.map(toClient)
+  })
+
+  // lectura compartida: propio o global ajeno (el personal ajeno sigue 404)
   app.get('/api/books/:id', { preHandler: app.verifySession }, async (req, reply) => {
     const { id } = req.params as { id: string }
     const { rows } = await app.query<BookRow>(
-      'SELECT * FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+      `SELECT b.*, (b.user_id = $2) AS is_mine FROM books b
+       WHERE b.id = $1 AND (b.user_id = $2 OR b.visibility = 'global')`, [id, req.user!.id],
     )
     if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
     const { rows: p } = await app.query(
@@ -119,6 +162,51 @@ export default async function bookRoutes(app: FastifyInstance) {
       [id, req.user!.id],
     )
     return { book: toClient(rows[0]), progress: p[0] ?? null }
+  })
+
+  // adoptar un libro global: copia los bytes a mi carpeta y crea mi propio
+  // registro (personal). Mi progreso, anotaciones y carpetas viven sobre mi
+  // copia; el original global no se toca.
+  app.post('/api/books/:id/adopt', { preHandler: app.verifySession }, async (req, reply) => {
+    const { id } = req.params as { id: string }
+    const { rows } = await app.query<BookRow>(
+      `SELECT * FROM books WHERE id = $1 AND visibility = 'global'`, [id],
+    )
+    if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
+    const src = rows[0]
+    if (src.user_id === req.user!.id) {
+      return reply.code(400).send({ message: 'El libro ya está en tu biblioteca' })
+    }
+    let data: Buffer
+    try {
+      data = await readFile(path.join(app.config.dataDir, src.file_path))
+    } catch {
+      return reply.code(404).send({ message: 'El archivo ya no está disponible' })
+    }
+    let cover: Buffer | null = null
+    if (src.cover_path) {
+      try {
+        cover = await readFile(path.join(app.config.dataDir, src.cover_path))
+      } catch {
+        cover = null // sin portada en disco: la copia queda con iniciales
+      }
+    }
+    const newId = crypto.randomUUID()
+    try {
+      const filePath = await saveBookFile(app.config.dataDir, req.user!.id, newId, src.format, data)
+      const coverPath = cover
+        ? await saveCover(app.config.dataDir, req.user!.id, newId, cover)
+        : null
+      const { rows: created } = await app.query<BookRow>(
+        `INSERT INTO books (id, user_id, title, author, format, file_path, cover_path, file_size, total_pages, visibility)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'personal') RETURNING *`,
+        [newId, req.user!.id, src.title, src.author, src.format, filePath, coverPath, data.length, src.total_pages],
+      )
+      return reply.code(201).send(toClient(created[0]))
+    } catch (e) {
+      await removeBookFiles(app.config.dataDir, path.join(req.user!.id, `${newId}.${src.format}`))
+      throw e
+    }
   })
 
   app.delete('/api/books/:id', { preHandler: app.verifySession }, async (req, reply) => {
@@ -228,7 +316,7 @@ export default async function bookRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { id } = req.params as { id: string }
       const { rows } = await app.query<BookRow>(
-        'SELECT * FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+        'SELECT * FROM books WHERE id = $1 AND (user_id = $2 OR visibility = \'global\')', [id, req.user!.id],
       )
       if (!rows.length) return reply.code(404).send({ message: 'Libro no encontrado' })
       const book = rows[0]
@@ -259,11 +347,12 @@ export default async function bookRoutes(app: FastifyInstance) {
     return reply.code(204).send()
   })
 
-  // sirve el libro o la portada del dueño; recurso ajeno o inexistente → 404 (nunca 403)
+  // sirve el libro o la portada del dueño, o de un libro global ajeno;
+  // recurso personal ajeno o inexistente → 404 (nunca 403)
   app.get('/api/files/:userId/:file', { preHandler: app.verifySession }, async (req, reply) => {
     const { userId, file } = req.params as { userId: string; file: string }
-    // sin traversal ni subrutas: el nombre debe ser un basename real
-    if (userId !== req.user!.id || file !== path.basename(file)) {
+    // sin traversal ni subrutas: ambos segmentos deben ser basenames reales
+    if (userId !== path.basename(userId) || file !== path.basename(file)) {
       return reply.code(404).send({ message: 'No encontrado' })
     }
     const ext = path.extname(file).toLowerCase()
@@ -271,11 +360,15 @@ export default async function bookRoutes(app: FastifyInstance) {
     if (!mime) return reply.code(404).send({ message: 'No encontrado' })
 
     const rel = `${userId}/${file}`
-    const { rows } = await app.query(
-      'SELECT file_path, cover_path FROM books WHERE user_id = $1 AND (file_path = $2 OR cover_path = $2)',
-      [req.user!.id, rel],
+    const { rows } = await app.query<{ user_id: string; visibility: string }>(
+      'SELECT user_id, visibility FROM books WHERE file_path = $1 OR cover_path = $1',
+      [rel],
     )
     if (!rows.length) return reply.code(404).send({ message: 'No encontrado' })
+    const row = rows[0]
+    if (row.user_id !== req.user!.id && row.visibility !== 'global') {
+      return reply.code(404).send({ message: 'No encontrado' })
+    }
 
     const abs = path.join(app.config.dataDir, rel)
     let size: number

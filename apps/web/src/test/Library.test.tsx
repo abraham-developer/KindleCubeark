@@ -28,6 +28,7 @@ function book(over: Partial<Book> & { id: string }): Book {
     title: over.title ?? 'Sin título',
     author: over.author ?? 'Anónimo',
     format: 'epub',
+    visibility: 'personal',
     cover_url: null,
     file_url: `/api/files/${over.id}`,
     total_pages: null,
@@ -232,7 +233,7 @@ describe('Library — subida', () => {
     renderLibrary()
     await userEvent.upload(await screen.findByLabelText(/elegir archivo/i), pdfFile)
     expect(await screen.findByTestId('book-card-b4')).toBeInTheDocument()
-    expect(uploadBook).toHaveBeenCalledWith(pdfFile, expect.any(Function))
+    expect(uploadBook).toHaveBeenCalledWith(pdfFile, expect.any(Function), 'personal')
     expect(mockPage.render).toHaveBeenCalled()
     expect(patchCover).toHaveBeenCalledWith('b4', expect.any(Blob))
     expect(patchCover.mock.calls[0][1].type).toBe('image/jpeg')
@@ -508,5 +509,86 @@ describe('Library — drag & drop: tarjeta Todos resalta', () => {
     expect(all.className).toContain('drag-over')
     fireEvent.dragLeave(all)
     expect(all.className).not.toContain('drag-over')
+  })
+})
+
+describe('Library — biblioteca global', () => {
+  const globals: Book[] = [
+    book({ id: 'g1', title: 'Cocina fácil', author: 'Chef', visibility: 'global', owner_email: 'otro@test.dev', is_mine: false }),
+    book({ id: 'g2', title: 'Historia naval', author: 'Marino', visibility: 'global', owner_email: 'yo@test.dev', is_mine: true }),
+  ]
+
+  it('la pestaña global lista los compartidos con quién los compartió', async () => {
+    const listGlobalBooks = vi.fn().mockResolvedValue(globals)
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listGlobalBooks,
+    })))
+    renderLibrary()
+    // perezosa: no se pide hasta abrir la pestaña
+    expect(listGlobalBooks).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByRole('tab', { name: /biblioteca global/i }))
+    expect(listGlobalBooks).toHaveBeenCalledTimes(1)
+    expect(await screen.findByTestId('global-card-g1')).toBeInTheDocument()
+    expect(screen.getByTestId('global-card-g2')).toBeInTheDocument()
+    expect(screen.getByText('de otro@test.dev')).toBeInTheDocument()
+    expect(screen.getByText('En tu biblioteca')).toBeInTheDocument()
+  })
+
+  it('adoptar llama adoptBook, avisa y marca la tarjeta', async () => {
+    const adoptBook = vi.fn().mockResolvedValue(globals[0])
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listFolders: vi.fn().mockResolvedValue([]),
+      listGlobalBooks: vi.fn().mockResolvedValue(globals),
+      adoptBook,
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('tab', { name: /biblioteca global/i }))
+    await screen.findByTestId('global-card-g1')
+    await userEvent.click(screen.getByRole('button', { name: /añadir a mi biblioteca/i }))
+    expect(adoptBook).toHaveBeenCalledWith('g1')
+    expect(await screen.findByText(/se añadió a tu biblioteca/i)).toBeInTheDocument()
+  })
+
+  it('la búsqueda global filtra por título, autor y dueño', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listGlobalBooks: vi.fn().mockResolvedValue(globals),
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('tab', { name: /biblioteca global/i }))
+    await screen.findByTestId('global-card-g1')
+    await userEvent.type(screen.getByLabelText(/buscar en la biblioteca global/i), 'naval')
+    expect(screen.queryByTestId('global-card-g1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('global-card-g2')).toBeInTheDocument()
+    await userEvent.clear(screen.getByLabelText(/buscar en la biblioteca global/i))
+    await userEvent.type(screen.getByLabelText(/buscar en la biblioteca global/i), 'otro@test.dev')
+    expect(screen.getByTestId('global-card-g1')).toBeInTheDocument()
+    expect(screen.queryByTestId('global-card-g2')).not.toBeInTheDocument()
+  })
+
+  it('estado vacío cuando nadie compartió nada', async () => {
+    apiSpies.push(...Object.values(mockApi({
+      listBooks: vi.fn().mockResolvedValue([]),
+      listGlobalBooks: vi.fn().mockResolvedValue([]),
+    })))
+    renderLibrary()
+    await userEvent.click(await screen.findByRole('tab', { name: /biblioteca global/i }))
+    expect(await screen.findByText(/aún no hay libros globales/i)).toBeInTheDocument()
+  })
+
+  it('elegir «Para todos» sube el libro como global', async () => {
+    const newBook = book({ id: 'b9', title: 'Compartido', format: 'epub' })
+    const uploadBook = vi.fn().mockResolvedValue(newBook)
+    const listBooks = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([newBook])
+    apiSpies.push(...Object.values(mockApi({ listBooks, uploadBook })))
+    renderLibrary()
+    await screen.findByText(/todavía no tienes libros/i)
+    await userEvent.click(screen.getByRole('button', { name: /para todos/i }))
+    const epubFile = new File(['PK fingido'], 'libro.epub', { type: 'application/epub+zip' })
+    await userEvent.upload(await screen.findByLabelText(/elegir archivo/i), epubFile)
+    expect(uploadBook).toHaveBeenCalledWith(epubFile, expect.any(Function), 'global')
+    expect(await screen.findByTestId('book-card-b9')).toBeInTheDocument()
   })
 })

@@ -72,6 +72,7 @@ const pdfBook: Book = {
   total_pages: NUM_PAGES,
   file_size: 900_000,
   added_at: '2026-09-01T00:00:00Z',
+  visibility: 'personal',
   percent: '70',
   position: { page: 7 },
   last_read: '2026-09-20T10:00:00Z',
@@ -462,5 +463,44 @@ describe('PdfReader', () => {
     selSpy.mockRestore()
     rectSpy.mockRestore()
     stageRectSpy.mockRestore()
+  })
+})
+
+describe('PdfReader — lupa', () => {
+  beforeEach(() => { window.localStorage.clear() })
+  afterEach(() => { window.localStorage.clear() })
+
+  it('la subbarra cambia el zoom, aparece la flotante y se esconden las zonas', async () => {
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Aumentar zoom' }))
+    // subbarra + flotante muestran 125 %
+    expect(await screen.findAllByRole('button', { name: 'Restablecer zoom' })).toHaveLength(2)
+    expect(screen.getAllByText('125%')).toHaveLength(2)
+    expect(document.querySelector('.zoom-bar.floating')).not.toBeNull()
+    expect(document.querySelector('.zoom-scroll')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Página anterior' })).not.toBeInTheDocument()
+    // restablecer vuelve al 100 % con volteo y zonas
+    fireEvent.click(screen.getAllByRole('button', { name: 'Restablecer zoom' })[0])
+    expect(screen.queryByText('125%')).not.toBeInTheDocument()
+    expect(document.querySelector('.zoom-bar.floating')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Página anterior' })).toBeInTheDocument()
+    expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1')
+  })
+
+  it('teclado +/−/0 ajusta la lupa y persiste el nivel', async () => {
+    renderReader({ position: { page: 7 }, percent: '70' })
+    await until(() => pages.has(7))
+    fireEvent.keyDown(window, { key: '+' })
+    expect(await screen.findByText('125%')).toBeInTheDocument()
+    expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1.25')
+    fireEvent.keyDown(window, { key: '-' })
+    await until(() => screen.queryByText('125%') == null)
+    expect(window.localStorage.getItem('kc.pdf.zoom')).toBe('1')
+    fireEvent.keyDown(window, { key: '+' })
+    expect(await screen.findByText('125%')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: '0' })
+    await until(() => screen.queryByText('125%') == null)
   })
 })

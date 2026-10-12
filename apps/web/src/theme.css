@@ -536,3 +536,93 @@ button { font-family: var(--serif); }
 
 /* sin destello azul de tap: el lector maneja sus propios gestos */
 .reader-stage, .reader-zone { -webkit-tap-highlight-color: transparent; }
+
+/* Pestañas Mis libros / Biblioteca global */
+.lib-tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.lib-tabs [role='tab'] {
+  font-family: var(--serif); font-size: .95rem; padding: 10px 16px; cursor: pointer;
+  background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  color: var(--ink-soft);
+}
+.lib-tabs [role='tab']:hover { color: var(--ink); }
+.lib-tabs [role='tab'].active { color: var(--ink); border-bottom-color: var(--accent); }
+.global-search { margin-bottom: 20px; }
+.global-search input { flex: 1; min-width: 200px; }
+
+/* Estantería: filas de lomos sobre tablas de madera, con etiqueta debajo */
+.shelves { --stand-h: 224px; display: flex; flex-direction: column; gap: 30px; }
+.shelf-row { display: flex; flex-direction: column; }
+.shelf-stands, .shelf-captions { display: flex; gap: 16px; justify-content: center; }
+.shelf-stand, .shelf-caption { width: calc(var(--book-h, 190px) * 0.6667); flex: none; min-width: 0; }
+.shelf-stand { height: var(--stand-h); display: flex; align-items: flex-end; justify-content: center; }
+.shelf-book { position: relative; }
+.shelf-book .book-cover {
+  position: relative; height: var(--book-h, 190px); aspect-ratio: 2 / 3;
+  border-radius: 3px 8px 8px 3px;
+}
+.shelf-book .book-cover:hover { transform: translateY(-10px); box-shadow: 0 16px 26px var(--shadow); }
+.shelf-cover .spine {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(90deg,
+    rgba(0,0,0,.34), rgba(0,0,0,.10) 9%, rgba(255,255,255,.12) 12%,
+    transparent 18%, transparent 88%, rgba(255,255,255,.22) 96%, rgba(0,0,0,.20));
+}
+.shelf-plank {
+  height: 14px; border-radius: 2px; margin-top: 2px;
+  background:
+    linear-gradient(to bottom, rgba(255,255,255,.28), rgba(255,255,255,0) 35%, rgba(0,0,0,.30)),
+    repeating-linear-gradient(93deg, #7c4f24 0 14px, #8a5a2b 14px 26px, #74491f 26px 40px);
+  box-shadow: 0 10px 14px -6px rgba(0,0,0,.45);
+}
+.shelf-captions { margin-top: 10px; align-items: flex-start; }
+.shelf-caption .book-meta h3 {
+  font-size: .85rem;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.shelf-caption .book-author { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shelf-caption .progress { margin-top: 6px; }
+.shelf-caption .progress .pct { min-width: 30px; font-size: .7rem; }
+.badge-global {
+  position: absolute; left: 6px; top: 6px; z-index: 2;
+  font-size: .66rem; letter-spacing: .06em; text-transform: uppercase;
+  background: var(--accent); color: var(--paper); padding: 2px 8px; border-radius: 10px;
+}
+.book-owner { margin: 2px 0 0; font-size: .72rem; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn-adopt { width: 100%; margin-top: 8px; font-size: .8rem; padding: 8px 6px; }
+.book-adopted { display: block; margin-top: 8px; font-size: .78rem; color: var(--ink-soft); }
+
+/* Lupa / zoom del lector */
+.zoom-scroll {
+  position: absolute; inset: 0; z-index: 2; overflow: auto;
+  touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch;
+  display: flex;
+}
+.zoom-scroll .pdf-page { margin: auto; padding: 12px; }
+.zoom-bar {
+  position: absolute; z-index: 6; display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 10px;
+  background: var(--paper-raised); border: 1px solid var(--line);
+  box-shadow: 0 4px 14px var(--shadow);
+}
+.zoom-bar.floating { right: 12px; bottom: 12px; }
+.zoom-bar .zoom-value { font-size: .8rem; color: var(--ink-soft); min-width: 44px; text-align: center; }
+.zoom-bar .reader-tool { min-width: 34px; }
+.reader-bottom .seg, .reader-subbar .seg, .add-book-row .seg { display: flex; gap: 6px; align-items: center; }
+.add-book-row .seg .reader-tool[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
+.reader-tool.zoom-value { min-width: 52px; }
+.block-screen .block-prose { font-size: calc(1.12rem * var(--block-zoom, 1)); }
+.block-screen .block-figure { max-width: calc(42rem * var(--block-zoom, 1)); }
+
+@media (max-width: 760px) {
+  .block-screen .block-prose { font-size: calc(1.05rem * var(--block-zoom, 1)); }
+}
+
+/* Responsive: estante compacto en teléfono (2 columnas, lomos más bajos) */
+@media (max-width: 480px) {
+  .shelves { --stand-h: 192px; gap: 24px; }
+  .shelf-stands, .shelf-captions { gap: 12px; }
+  .shelf-stand, .shelf-caption { width: calc(var(--book-h, 190px) * 0.82 * 0.6667); }
+  .shelf-book .book-cover { height: calc(var(--book-h, 190px) * 0.82); }
+  .lib-tabs [role='tab'] { padding: 10px 10px; font-size: .88rem; }
+  .add-book-row { flex-wrap: wrap; }
+}

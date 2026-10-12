@@ -10,7 +10,7 @@ import { api, type Annotation, type Book, type Position } from '../api'
 import { useProgressSync } from '../lib/progressSync'
 import { splitCfiRange, joinCfiRange, cfiSection } from '../lib/cfiRange'
 import { TopBar, BookmarkButton } from './Chrome'
-import AaPanel, { fontFamilyStack, loadSettings, type ReaderSettings } from './AaPanel'
+import AaPanel, { FONT_DEFAULT, FONT_MAX, FONT_MIN, FONT_STEP, fontFamilyStack, loadSettings, type ReaderSettings } from './AaPanel'
 import SelectionMenu, { HIGHLIGHT_FILL, type HighlightColor } from './SelectionMenu'
 import NoteEditor from './NoteEditor'
 import AnnotationsPanel from './AnnotationsPanel'
@@ -447,7 +447,18 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     setMenu(null)
   }
 
-  // ── Teclado ←/→/espacio/PageUp/PageDown (mismo guard que el lector PDF) ──
+  // ── Lupa EPUB: el zoom es el tamaño de letra (refluye el texto) ─────────
+  const zoomIn = useCallback(() => {
+    setSettings(s => ({ ...s, fontSize: Math.min(FONT_MAX, s.fontSize + FONT_STEP) }))
+  }, [])
+  const zoomOut = useCallback(() => {
+    setSettings(s => ({ ...s, fontSize: Math.max(FONT_MIN, s.fontSize - FONT_STEP) }))
+  }, [])
+  const zoomReset = useCallback(() => {
+    setSettings(s => ({ ...s, fontSize: FONT_DEFAULT }))
+  }, [])
+
+  // ── Teclado ←/→/espacio/PageUp/PageDown y lupa +/−/0 (mismo guard que el PDF)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
@@ -467,11 +478,25 @@ export default function EpubReader({ book, progress, onBack }: Props) {
           e.preventDefault()
           turnPrev()
           break
+        case '+':
+        case '=':
+          e.preventDefault()
+          zoomIn()
+          break
+        case '-':
+        case '_':
+          e.preventDefault()
+          zoomOut()
+          break
+        case '0':
+          e.preventDefault()
+          zoomReset()
+          break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [turnNext, turnPrev])
+  }, [turnNext, turnPrev, zoomIn, zoomOut, zoomReset])
 
   // ── Swipe horizontal (flick más corto que arrastre, como en el PDF) ─────
   // Compartido por los touch del stage (coarse) y los que epub.js re-emite.
@@ -541,6 +566,16 @@ export default function EpubReader({ book, progress, onBack }: Props) {
             onClick={() => setAaOpen(v => !v)}>
             Aa
           </button>
+          <div className="seg" role="group" aria-label="Lupa">
+            <button type="button" className="reader-tool" aria-label="Reducir zoom"
+              disabled={settings.fontSize <= FONT_MIN} onClick={zoomOut}>A−</button>
+            <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
+              title="Restablecer zoom (0)" onClick={zoomReset}>
+              {Math.round((settings.fontSize / FONT_DEFAULT) * 100)}%
+            </button>
+            <button type="button" className="reader-tool" aria-label="Aumentar zoom"
+              disabled={settings.fontSize >= FONT_MAX} onClick={zoomIn}>A+</button>
+          </div>
           <input
             type="range"
             className="reader-slider"

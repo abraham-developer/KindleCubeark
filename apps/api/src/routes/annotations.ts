@@ -94,7 +94,7 @@ export default async function annotationRoutes(app: FastifyInstance) {
   app.get('/api/books/:id/annotations', { preHandler: app.verifySession }, async (req, reply) => {
     const { id } = req.params as { id: string }
     const { rows: books } = await app.query<{ format: string }>(
-      'SELECT format FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+      'SELECT format FROM books WHERE id = $1 AND (user_id = $2 OR visibility = \'global\')', [id, req.user!.id],
     )
     if (!books.length) return reply.code(404).send({ message: 'Libro no encontrado' })
 
@@ -122,7 +122,7 @@ export default async function annotationRoutes(app: FastifyInstance) {
   app.post('/api/books/:id/annotations', { preHandler: app.verifySession }, async (req, reply) => {
     const { id } = req.params as { id: string }
     const { rows: books } = await app.query<{ format: string; total_pages: number | null }>(
-      'SELECT format, total_pages FROM books WHERE id = $1 AND user_id = $2', [id, req.user!.id],
+      'SELECT format, total_pages FROM books WHERE id = $1 AND (user_id = $2 OR visibility = \'global\')', [id, req.user!.id],
     )
     if (!books.length) return reply.code(404).send({ message: 'Libro no encontrado' })
     const book = books[0]

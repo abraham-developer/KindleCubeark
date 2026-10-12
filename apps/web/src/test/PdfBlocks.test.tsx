@@ -42,6 +42,7 @@ const pdfBook: Book = {
   total_pages: NUM_PAGES,
   file_size: 900_000,
   added_at: '2026-09-01T00:00:00Z',
+  visibility: 'personal',
   percent: '70',
   position: { page: 7 },
   last_read: '2026-09-20T10:00:00Z',

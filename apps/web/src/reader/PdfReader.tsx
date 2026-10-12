@@ -67,6 +67,69 @@ function initialPage(book: Book, progress: ReaderProgress): number {
   return Math.max(1, Math.min(saved, max))
 }
 
+// ── Lupa / zoom (vista página y vista bloques comparten el nivel) ──────────
+const ZOOM_KEY = 'kc.pdf.zoom'
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 3
+const ZOOM_STEP = 1.25
+
+function loadZoom(): number {
+  try {
+    const raw = window.localStorage.getItem(ZOOM_KEY)
+    // Number(null) es 0 (finito): la ausencia explícita es 100 %
+    if (raw == null || raw === '') return 1
+    const v = Number(raw)
+    if (!Number.isFinite(v)) return 1
+    return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v))
+  } catch {
+    return 1
+  }
+}
+
+function stepZoom(current: number, dir: 'in' | 'out'): number {
+  const next = dir === 'in' ? current * ZOOM_STEP : current / ZOOM_STEP
+  const rounded = Math.round(next * 100) / 100
+  // caer exacto al 100 % al pasar por él
+  if ((dir === 'in' && current < 1 && rounded >= 1) || (dir === 'out' && current > 1 && rounded <= 1)) return 1
+  return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, rounded))
+}
+
+/** Hoja PDF (canvas + texto seleccionable + resaltados), compartida por la
+ *  vista centrada con volteo y la vista con lupa (scroll/paneable). */
+function PdfPageCanvas({ canvasRef, textLayerRef, night, pageAnnotations }: {
+  canvasRef: React.RefObject<HTMLCanvasElement>
+  textLayerRef: React.RefObject<HTMLDivElement>
+  night: boolean
+  pageAnnotations: Annotation[]
+}) {
+  return (
+    <div className="pdf-page">
+      <canvas ref={canvasRef} className={`pdf-canvas ${night ? 'night' : ''}`} aria-hidden="true" />
+      {/* textLayer de pdf.js: texto seleccionable sobre la página */}
+      <div ref={textLayerRef} className="textLayer" aria-hidden="true" />
+      {/* resaltados guardados, en coords normalizadas 0–1 de la página */}
+      <div className="pdf-highlights">
+        {pageAnnotations.filter(a => Array.isArray(a.position?.rects)).flatMap(a =>
+          (a.position.rects as Rect[]).map((rect, i) => (
+            <div
+              key={`${a.id}-${i}`}
+              className={`hl ${a.color}`}
+              data-annotation-id={a.id}
+              title={a.note || undefined}
+              style={{
+                left: `${rect.x * 100}%`,
+                top: `${rect.y * 100}%`,
+                width: `${rect.w * 100}%`,
+                height: `${rect.h * 100}%`,
+              }}
+            />
+          )),
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** Mensaje en español neutro para un fallo de traducción según la causa. */
 function translateErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
@@ -86,6 +149,16 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // ── Lupa: 50 %–300 %, persiste entre sesiones ─────────────────────────────
+  const [zoom, setZoom] = useState(() => loadZoom())
+  useEffect(() => {
+    try { window.localStorage.setItem(ZOOM_KEY, String(zoom)) } catch { /* sin persistencia */ }
+  }, [zoom])
+  const zoomIn = useCallback(() => setZoom(z => stepZoom(z, 'in')), [])
+  const zoomOut = useCallback(() => setZoom(z => stepZoom(z, 'out')), [])
+  const zoomReset = useCallback(() => setZoom(1), [])
+  const zoomed = zoom !== 1
 
   // ── Vista por bloques (minilecturas estilo Kindle) ───────────────────────
   const [view, setView] = useState<PdfView>(() => loadPdfView())
@@ -197,7 +270,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         const h = Math.max(stage?.clientHeight ?? 0, 1)
         const base = pdfPage.getViewport({ scale: 1 })
         const cssScale = Math.max(
-          fit === 'width' ? w / base.width : Math.min(w / base.width, h / base.height), 0.05)
+          fit === 'width' ? w / base.width : Math.min(w / base.width, h / base.height), 0.05) * zoom
         const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3))
         const cssViewport = pdfPage.getViewport({ scale: cssScale })
         // tope de área como pdf.js viewer: canvas demasiado grande en iOS queda
@@ -253,7 +326,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
       cancelled = true
       renderTaskRef.current?.cancel?.()
     }
-  }, [page, fit, size, numPages, view])
+  }, [page, fit, size, numPages, view, zoom])
 
   // Fija bloque y cara tras extraer: retomado guardado (una sola vez),
   // borde pendiente al retroceder de página, o saneo contra el total real.
@@ -617,10 +690,10 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   // Navegación fresca para el listener global: se suscribe una sola vez y
   // lee el turno vigente por ref (un closure viejo giraría página en vez
   // de bloque justo después de extraer).
-  const navRef = useRef({ turnNext, turnPrev })
-  navRef.current = { turnNext, turnPrev }
+  const navRef = useRef({ turnNext, turnPrev, zoomIn, zoomOut, zoomReset })
+  navRef.current = { turnNext, turnPrev, zoomIn, zoomOut, zoomReset }
 
-  // ── Teclado ←/→/espacio/PageUp/PageDown ───────────────────────────────
+  // ── Teclado ←/→/espacio/PageUp/PageDown y lupa +/−/0 ──────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
@@ -639,6 +712,20 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         case 'PageUp':
           e.preventDefault()
           navRef.current.turnPrev()
+          break
+        case '+':
+        case '=':
+          e.preventDefault()
+          navRef.current.zoomIn()
+          break
+        case '-':
+        case '_':
+          e.preventDefault()
+          navRef.current.zoomOut()
+          break
+        case '0':
+          e.preventDefault()
+          navRef.current.zoomReset()
           break
       }
     }
@@ -659,6 +746,20 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     }
     window.addEventListener('resize', measure)
     return () => { ro?.disconnect(); window.removeEventListener('resize', measure) }
+  }, [])
+
+  // ── Lupa con Ctrl+rueda (y pinch de trackpad): listener nativo no pasivo
+  // para poder preventDefault y que la página no haga scroll/zoom del navegador
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      setZoom(z => stepZoom(z, e.deltaY < 0 ? 'in' : 'out'))
+    }
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', onWheel)
   }, [])
 
   // ── Pulsación larga: diccionario sobre la palabra (dedo o mouse) ─────────
@@ -838,6 +939,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     const start = touchStart.current
     touchStart.current = null
     if (!start) return
+    // con lupa el gesto horizontal panea el contenido (scroll nativo): no voltea
+    if (zoomed) return
     const t = e.changedTouches[0]
     const dx = t.clientX - start.x
     const dy = t.clientY - start.y
@@ -922,6 +1025,14 @@ export default function PdfReader({ book, progress, onBack }: Props) {
               ))}
             </select>
           )}
+          <div className="seg" role="group" aria-label="Lupa">
+            <button type="button" className="reader-tool" aria-label="Reducir zoom"
+              disabled={zoom <= ZOOM_MIN} onClick={zoomOut}>−</button>
+            <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
+              title="Restablecer zoom (0)" onClick={zoomReset}>{Math.round(zoom * 100)}%</button>
+            <button type="button" className="reader-tool" aria-label="Aumentar zoom"
+              disabled={zoom >= ZOOM_MAX} onClick={zoomIn}>+</button>
+          </div>
         </div>
       )}
 
@@ -929,7 +1040,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         onTouchEnd={onTouchEnd} onMouseDown={onStageMouseDown} onMouseMove={onStageMouseMove}
         onMouseUp={onStageMouseUp}>
         {view === 'blocks' ? (
-          <div className="block-screen" key={`${page}:${block}:${face}`}>
+          <div className="block-screen" key={`${page}:${block}:${face}`}
+            style={{ '--block-zoom': zoom } as React.CSSProperties}>
             {pageBlocks === null && !blocksError && (
               <div className="reader-loading">Extrayendo texto…</div>
             )}
@@ -977,32 +1089,13 @@ export default function PdfReader({ book, progress, onBack }: Props) {
               </p>
             )}
           </div>
+        ) : zoomed ? (
+        <div className="zoom-scroll">
+          <PdfPageCanvas canvasRef={canvasRef} textLayerRef={textLayerRef} night={night} pageAnnotations={pageAnnotations} />
+        </div>
         ) : (
         <PageTurn key={page} direction={direction} night={night}>
-          <div className="pdf-page">
-            <canvas ref={canvasRef} className={`pdf-canvas ${night ? 'night' : ''}`} aria-hidden="true" />
-            {/* textLayer de pdf.js: texto seleccionable sobre la página */}
-            <div ref={textLayerRef} className="textLayer" aria-hidden="true" />
-            {/* resaltados guardados, en coords normalizadas 0–1 de la página */}
-            <div className="pdf-highlights">
-              {pageAnnotations.filter(a => Array.isArray(a.position?.rects)).flatMap(a =>
-                (a.position.rects as Rect[]).map((rect, i) => (
-                  <div
-                    key={`${a.id}-${i}`}
-                    className={`hl ${a.color}`}
-                    data-annotation-id={a.id}
-                    title={a.note || undefined}
-                    style={{
-                      left: `${rect.x * 100}%`,
-                      top: `${rect.y * 100}%`,
-                      width: `${rect.w * 100}%`,
-                      height: `${rect.h * 100}%`,
-                    }}
-                  />
-                )),
-              )}
-            </div>
-          </div>
+          <PdfPageCanvas canvasRef={canvasRef} textLayerRef={textLayerRef} night={night} pageAnnotations={pageAnnotations} />
         </PageTurn>
         )}
 
@@ -1013,15 +1106,34 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         {/* Marcador: cinta en la esquina, visible también en modo inmersivo */}
         <BookmarkButton marked={bookmarked} onToggle={() => void toggleBookmark()} />
 
-        {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
-        <button type="button" className="reader-zone left" aria-label="Página anterior"
-          onClick={guardSwipe(turnPrev)} disabled={page <= 1} />
-        <button type="button" className="reader-zone center"
-          aria-label={chromeVisible ? 'Ocultar controles' : 'Mostrar controles'}
-          onClick={guardSwipe(() => setChromeVisible(v => !v))} />
-        <button type="button" className="reader-zone right" aria-label="Página siguiente"
-          onClick={guardSwipe(turnNext)} />
+        {/* Con lupa las zonas se esconden: taparían el paneo del contenido */}
+        {!zoomed && (
+          <>
+            {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
+            <button type="button" className="reader-zone left" aria-label="Página anterior"
+              onClick={guardSwipe(turnPrev)} disabled={page <= 1} />
+            <button type="button" className="reader-zone center"
+              aria-label={chromeVisible ? 'Ocultar controles' : 'Mostrar controles'}
+              onClick={guardSwipe(() => setChromeVisible(v => !v))} />
+            <button type="button" className="reader-zone right" aria-label="Página siguiente"
+              onClick={guardSwipe(turnNext)} />
+          </>
+        )}
       </div>
+
+      {/* Barra flotante con lupa: visible aun en inmersivo, con vuelta de hoja */}
+      {zoomed && (
+        <div className="zoom-bar floating" role="toolbar" aria-label="Lupa">
+          <button type="button" className="reader-tool" aria-label="Anterior" onClick={turnPrev}>‹</button>
+          <button type="button" className="reader-tool" aria-label="Reducir zoom"
+            disabled={zoom <= ZOOM_MIN} onClick={zoomOut}>−</button>
+          <button type="button" className="reader-tool zoom-value" aria-label="Restablecer zoom"
+            onClick={zoomReset}>{Math.round(zoom * 100)}%</button>
+          <button type="button" className="reader-tool" aria-label="Aumentar zoom"
+            disabled={zoom >= ZOOM_MAX} onClick={zoomIn}>+</button>
+          <button type="button" className="reader-tool" aria-label="Siguiente" onClick={turnNext}>›</button>
+        </div>
+      )}
 
       {chromeVisible && (
         <BottomBar

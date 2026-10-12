@@ -11,7 +11,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type Position = { page: number; block?: number; blockCount?: number; face?: 'orig' | 'trans' } | { cfi: string; percent: number; section: number }
-export type Book = { id: string; title: string; author: string; format: 'pdf' | 'epub'; cover_url: string | null; file_url: string; total_pages: number | null; file_size: number; added_at: string; folder_id: string | null; percent: string | null; position: Position | null; last_read: string | null }
+export type Visibility = 'personal' | 'global'
+export type Book = { id: string; title: string; author: string; format: 'pdf' | 'epub'; cover_url: string | null; file_url: string; total_pages: number | null; file_size: number; added_at: string; folder_id: string | null; visibility: Visibility; owner_email?: string | null; is_mine?: boolean; percent: string | null; position: Position | null; last_read: string | null }
 export type Annotation = { id: string; book_id: string; kind: 'highlight' | 'note'; position: any; quoted_text: string; note: string; color: string; created_at: string }
 export type Folder = { id: string; name: string; color: string; book_count: number; created_at: string }
 
@@ -22,13 +23,15 @@ export const api = {
   me: () => request<{ id: string; email: string } | null>('/auth/me').catch(() => null),
   listBooks: () => request<Book[]>('/books'),
   getBook: (id: string) => request<{ book: Book; progress: { position: Position; percent: string } | null }>(`/books/${id}`),
-  uploadBook: (file: File, onProgress?: (p: number) => void) => new Promise<Book>((resolve, reject) => {
-    const fd = new FormData(); fd.append('file', file)
+  uploadBook: (file: File, onProgress?: (p: number) => void, visibility: Visibility = 'personal') => new Promise<Book>((resolve, reject) => {
+    const fd = new FormData(); fd.append('file', file); fd.append('visibility', visibility)
     const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/books')
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
     xhr.onload = () => xhr.status === 201 ? resolve(JSON.parse(xhr.responseText)) : reject(new ApiError(xhr.status, JSON.parse(xhr.responseText || '{}').message ?? 'Error al subir'))
     xhr.send(fd)
   }),
+  listGlobalBooks: (q?: string) => request<Book[]>(`/books/global${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  adoptBook: (id: string) => request<Book>(`/books/${id}/adopt`, { method: 'POST' }),
   patchCover: (id: string, blob: Blob) => request<Book>(`/books/${id}/cover`, { method: 'PATCH', headers: { 'content-type': blob.type || 'image/jpeg' }, body: blob }),
   deleteBook: (id: string) => request<void>(`/books/${id}`, { method: 'DELETE' }),
   patchProgress: (id: string, position: Position, percent: number) => request<{ position: Position; percent: number; updated_at: string }>(`/books/${id}/progress`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ position, percent }) }),

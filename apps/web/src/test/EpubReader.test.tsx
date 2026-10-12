@@ -63,6 +63,7 @@ const epubBook: Book = {
   total_pages: null,
   file_size: 1_400_000,
   added_at: '2026-09-01T00:00:00Z',
+  visibility: 'personal',
   percent: '70',
   position: { cfi: 'epubcfi(/6/4)', percent: 70, section: 2 },
   last_read: '2026-09-20T10:00:00Z',
@@ -524,5 +525,29 @@ describe('EpubReader', () => {
     expect(renditionFns.prev).not.toHaveBeenCalled()
     expect(renditionFns.next).not.toHaveBeenCalled()
     hostRectSpy.mockRestore()
+  })
+})
+
+describe('EpubReader — lupa', () => {
+  it('los controles del pie cambian el tamaño y muestran el porcentaje', async () => {
+    renderReader(null)
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+    fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    expect(await until(() => screen.queryByRole('button', { name: 'Aumentar zoom' }) != null)).toBe(true)
+    // 18px → A+ llega a 20px (111 %)
+    fireEvent.click(screen.getByRole('button', { name: 'Aumentar zoom' }))
+    expect(renditionFns.themes.fontSize).toHaveBeenCalledWith('20px')
+    expect(screen.getByRole('button', { name: 'Restablecer zoom' })).toHaveTextContent('111%')
+    fireEvent.click(screen.getByRole('button', { name: 'Restablecer zoom' }))
+    expect(renditionFns.themes.fontSize).toHaveBeenCalledWith('18px')
+  })
+
+  it('teclado +/−/0 ajusta la lupa', async () => {
+    renderReader(null)
+    await until(() => renditionFns.display.mock.calls.length >= 1)
+    fireEvent.keyDown(window, { key: '+' })
+    expect(await until(() => renditionFns.themes.fontSize.mock.calls.some(c => c[0] === '20px'))).toBe(true)
+    fireEvent.keyDown(window, { key: '-' })
+    expect(await until(() => renditionFns.themes.fontSize.mock.calls.some(c => c[0] === '18px'))).toBe(true)
   })
 })

@@ -20,9 +20,10 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   theme: 'day',
 }
 
-const FONT_MIN = 12
-const FONT_MAX = 32
-const FONT_STEP = 2
+export const FONT_MIN = 12
+export const FONT_MAX = 32
+export const FONT_STEP = 2
+export const FONT_DEFAULT = 18
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
