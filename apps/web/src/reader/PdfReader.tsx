@@ -609,6 +609,12 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     if (next) setViewAndPersist('blocks') // el estudio vive sobre los bloques
   }, [studyOn, setViewAndPersist])
 
+  // Navegación fresca para el listener global: se suscribe una sola vez y
+  // lee el turno vigente por ref (un closure viejo giraría página en vez
+  // de bloque justo después de extraer).
+  const navRef = useRef({ turnNext, turnPrev })
+  navRef.current = { turnNext, turnPrev }
+
   // ── Teclado ←/→/espacio/PageUp/PageDown ───────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -622,18 +628,18 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         case 'PageDown':
         case ' ':
           e.preventDefault()
-          turnNext()
+          navRef.current.turnNext()
           break
         case 'ArrowLeft':
         case 'PageUp':
           e.preventDefault()
-          turnPrev()
+          navRef.current.turnPrev()
           break
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [turnNext, turnPrev])
+  }, [])
 
   // ── Resize: re-render con el nuevo tamaño (fit page/width) ────────────
   useEffect(() => {
@@ -914,12 +920,21 @@ export default function PdfReader({ book, progress, onBack }: Props) {
             )}
             {blocksError && <p role="alert" className="lib-alert reader-error">{blocksError}</p>}
             {pageBlocks !== null && blockCount === 0 && !blocksError && (
-              <div className="block-empty">
-                <p>Esta página no tiene texto extraíble (puede ser una imagen escaneada).</p>
-                <button type="button" className="btn" onClick={() => setViewAndPersist('page')}>
-                  Ver página original
-                </button>
-              </div>
+              imgCount !== null && imgCount > 0 && docRef.current ? (
+                <div className="block-prose">
+                  <p className="block-note">Esta página no tiene texto extraíble y se muestra como imagen.</p>
+                  <BlockPageFigure key={page} doc={docRef.current} page={page} night={night} />
+                </div>
+              ) : imgCount === null ? (
+                <div className="reader-loading">Cargando…</div>
+              ) : (
+                <div className="block-empty">
+                  <p>Esta página no tiene texto extraíble (puede ser una imagen escaneada).</p>
+                  <button type="button" className="btn" onClick={() => setViewAndPersist('page')}>
+                    Ver página original
+                  </button>
+                </div>
+              )
             )}
             {imgCount !== null && imgCount > 0 && docRef.current && (
               <div className="block-figures">

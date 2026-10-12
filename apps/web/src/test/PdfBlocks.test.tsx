@@ -272,4 +272,40 @@ describe('PdfReader por bloques', () => {
     fireEvent.click(screen.getByRole('button', { name: /ocultar imágenes/i }))
     expect(screen.queryByText('Página 7 original')).not.toBeInTheDocument()
   })
+
+  it('sin texto pero con imágenes muestra la página como imagen automáticamente', async () => {
+    getPage.mockImplementation(async (n: number) => ({
+      pageNumber: n,
+      getViewport: vi.fn(() => ({ width: 600, height: 800 })),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getTextContent: vi.fn(async () => ({ items: [] })),
+      getOperatorList: vi.fn(async () => ({
+        fnArray: [999],
+        argsArray: [['img-foto']],
+      })),
+      cleanup: vi.fn(),
+    }))
+    renderReader({ position: { page: 7 }, percent: '70' })
+
+    // bloque-imagen directo, sin botón ni callejón sin salida
+    expect(await screen.findByText('Página 7 original')).toBeInTheDocument()
+    expect(screen.getByText(/se muestra como imagen/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /ver página original/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/bloque \d+ de/i)).not.toBeInTheDocument()
+  })
+
+  it('sin texto ni imágenes mantiene el aviso con salida a página original', async () => {
+    getPage.mockImplementation(async (n: number) => ({
+      pageNumber: n,
+      getViewport: vi.fn(() => ({ width: 600, height: 800 })),
+      render: vi.fn(() => ({ promise: Promise.resolve() })),
+      getTextContent: vi.fn(async () => ({ items: [] })),
+      getOperatorList: vi.fn(async () => ({ fnArray: [], argsArray: [] })),
+      cleanup: vi.fn(),
+    }))
+    renderReader({ position: { page: 7 }, percent: '70' })
+
+    expect(await screen.findByText(/no tiene texto extraíble/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /ver página original/i })).toBeInTheDocument()
+  })
 })

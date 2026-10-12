@@ -167,7 +167,9 @@ estudiar el idioma mientras lees. Traduce con LibreTranslate autohospedado
 
 En la vista por bloques, las páginas con ilustraciones muestran un botón
 «Ver N imágenes» que expande la página original inline, sin salir del modo
-bloques.
+bloques. Y si una página no tiene texto extraíble pero sí imágenes (texto
+en curvas o fuentes raras), se muestra directo como imagen en su propio
+bloque en vez del aviso sin salida.
 
 **Diccionario**: mantén presionada una palabra con el dedo (o con el mouse)
 y se marca en azul con su significado en un popover: glosas en español del
