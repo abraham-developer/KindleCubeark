@@ -15,6 +15,9 @@ export type Visibility = 'personal' | 'global'
 export type Book = { id: string; title: string; author: string; format: 'pdf' | 'epub'; cover_url: string | null; file_url: string; total_pages: number | null; file_size: number; added_at: string; folder_id: string | null; visibility: Visibility; owner_email?: string | null; is_mine?: boolean; percent: string | null; position: Position | null; last_read: string | null }
 export type Annotation = { id: string; book_id: string; kind: 'highlight' | 'note'; position: any; quoted_text: string; note: string; color: string; created_at: string }
 export type Folder = { id: string; name: string; color: string; book_count: number; created_at: string }
+export type TypingProgress = { word_index: number; char_index: number; keyboard_layout: string; target_lang: string; bilingual: boolean; total_words: number; updated_at: string }
+export type TypingScore = { id: string; wpm: number; accuracy: number; score: number; words_completed: number; errors: number; duration_ms: number; keyboard_layout: string; target_lang: string; bilingual: boolean; created_at: string }
+export type TypingState = { progress: TypingProgress | null; scores: TypingScore[]; best: { wpm: number; accuracy: number; score: number } | null }
 
 export const api = {
   register: (email: string, password: string) => request<{ id: string; email: string }>('/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) }),
@@ -46,4 +49,8 @@ export const api = {
   createAnnotation: (bookId: string, body: Pick<Annotation, 'kind' | 'position'> & Partial<Pick<Annotation, 'quoted_text' | 'note' | 'color'>>) => request<Annotation>(`/books/${bookId}/annotations`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   deleteAnnotation: (id: string) => request<void>(`/annotations/${id}`, { method: 'DELETE' }),
   translate: (q: string, target: string) => request<{ translated_text: string }>('/translate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ q, target }) }),
+  getTyping: (bookId: string) => request<TypingState>(`/books/${bookId}/typing`),
+  saveTypingProgress: (bookId: string, body: Omit<TypingProgress, 'updated_at'>) => request<TypingProgress>(`/books/${bookId}/typing/progress`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+  resetTypingProgress: (bookId: string) => request<void>(`/books/${bookId}/typing/progress`, { method: 'DELETE' }),
+  addTypingScore: (bookId: string, body: Omit<TypingScore, 'id' | 'created_at'>) => request<TypingScore>(`/books/${bookId}/typing/scores`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
 }

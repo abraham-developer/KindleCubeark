@@ -102,7 +102,7 @@ services:
   # Nota: el primer arranque tarda minutos en descargar los modelos.
   translate:
     image: libretranslate/libretranslate
-    command: --load-only en,es,de,zh
+    command: --load-only en,es,fr,de,zh
     networks:
       - internal
       - admin

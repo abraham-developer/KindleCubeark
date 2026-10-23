@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 
 // Idiomas destino del modo estudio bilingüe (códigos LibreTranslate/Argos).
-const TARGETS = new Set(['en', 'de', 'zh', 'es'])
+const TARGETS = new Set(['en', 'fr', 'de', 'zh', 'es'])
 const MAX_CHARS = 5000
 
 export default async function translateRoutes(app: FastifyInstance) {

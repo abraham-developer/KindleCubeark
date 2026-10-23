@@ -31,13 +31,13 @@ services:
       db:
         condition: service_healthy
   # LibreTranslate autohospedado (open source, offline): solo se levanta con
-  # `docker compose --profile translate up -d`. Carga únicamente inglés,
+  # `docker compose --profile translate up -d`. Carga únicamente inglés, francés,
   # español, alemán y chino (el español es el origen típico) para mantenerse
   # ligero. Nota: el primer arranque descarga los modelos (~minutos).
   translate:
     image: libretranslate/libretranslate
     profiles: ["translate"]
-    command: --load-only en,es,de,zh
+    command: --load-only en,es,fr,de,zh
     ports: ["5000:5000"]
 volumes:
   dbdata: {}

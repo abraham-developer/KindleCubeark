@@ -49,10 +49,11 @@ function ProgressBar({ value, className }: { value: number; className?: string }
 }
 
 /** Menú contextual con confirmación en línea para eliminar. */
-function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onVisibility, onDelete }: {
+function ConfirmMenu({ book, folders, onContinue, onTyping, onReset, onMove, onVisibility, onDelete }: {
   book: Book
   folders: Folder[]
   onContinue: () => void
+  onTyping: () => void
   onReset: () => Promise<void>
   onMove: (folderId: string | null) => Promise<void>
   onVisibility: (visibility: Visibility) => Promise<void>
@@ -87,6 +88,7 @@ function ConfirmMenu({ book, folders, onContinue, onReset, onMove, onVisibility,
       {open && (
         <div className="menu" role="menu" aria-label={`Acciones de ${book.title}`}>
           <button type="button" role="menuitem" disabled={busy} onClick={() => act(async () => { onContinue() })}>Continuar</button>
+          <button type="button" role="menuitem" disabled={busy} onClick={() => act(async () => { onTyping() })}>Modo typing (escritorio)</button>
           <button type="button" role="menuitem" disabled={busy} onClick={() => act(onReset)}>Desde el principio</button>
           {folders.map(f => (
             <button type="button" key={f.id} role="menuitem" disabled={busy}
@@ -206,7 +208,7 @@ function MineStand({ book, folders, onMove, onReset, onVisibility, onDelete }: {
         <Cover book={book} />
         <span className="spine" aria-hidden="true" />
       </button>
-      <ConfirmMenu book={book} folders={folders} onContinue={open} onReset={() => onReset(book)}
+      <ConfirmMenu book={book} folders={folders} onContinue={open} onTyping={() => navigate(`/typing/${book.id}`)} onReset={() => onReset(book)}
         onMove={folderId => onMove(book.id, folderId)}
         onVisibility={visibility => onVisibility(book, visibility)}
         onDelete={() => onDelete(book)} />

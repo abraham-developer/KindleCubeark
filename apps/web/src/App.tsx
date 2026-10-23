@@ -4,7 +4,10 @@ import { AuthProvider, useAuth } from './state/AuthContext'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Library from './pages/Library'
+import { Suspense, lazy } from 'react'
 import Reader from './reader/Reader'
+
+const TypingMode = lazy(() => import('./pages/TypingMode'))
 
 function RequireAuth() {
   const { user, loading } = useAuth()
@@ -22,6 +25,7 @@ export default function App() {
           <Route element={<RequireAuth />}>
             <Route path="/" element={<Library />} />
             <Route path="/reader/:bookId" element={<Reader />} />
+            <Route path="/typing/:bookId" element={<Suspense fallback={<div className="page-center">Cargando…</div>}><TypingMode /></Suspense>} />
           </Route>
         </Routes>
       </BrowserRouter>

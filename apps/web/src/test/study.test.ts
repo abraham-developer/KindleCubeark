@@ -14,11 +14,13 @@ afterEach(() => {
 })
 
 describe('idiomas de estudio', () => {
-  it('ofrece inglés, alemán, chino y español', () => {
-    expect(STUDY_LANGS.map(l => l.code)).toEqual(['en', 'de', 'zh', 'es'])
+  it('ofrece inglés, francés, alemán, chino y español', () => {
+    expect(STUDY_LANGS.map(l => l.code)).toEqual(['en', 'fr', 'de', 'zh', 'es'])
     expect(studyLangLabel('de')).toBe('Alemán')
+    expect(studyLangLabel('fr')).toBe('Francés')
     expect(isStudyLang('zh')).toBe(true)
-    expect(isStudyLang('fr')).toBe(false)
+    expect(isStudyLang('fr')).toBe(true)
+    expect(isStudyLang('pt')).toBe(false)
   })
 
   it('las prefs persisten activación e idioma', () => {

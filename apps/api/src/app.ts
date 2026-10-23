@@ -13,6 +13,7 @@ import books from './routes/books.js'
 import annotations from './routes/annotations.js'
 import folders from './routes/folders.js'
 import translate from './routes/translate.js'
+import typing from './routes/typing.js'
 import multipart from '@fastify/multipart'
 
 export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<ReturnType<typeof loadConfig>> } = {}) {
@@ -49,6 +50,7 @@ export async function buildApp(opts: { skipStatic?: boolean; config?: Partial<Re
   await app.register(folders)
   await app.register(annotations)
   await app.register(translate)
+  await app.register(typing)
   // estático solo en producción (los tests usan skipStatic); si el build web
   // aún no existe, no se registra para no romper el arranque
   if (serveSpa) {

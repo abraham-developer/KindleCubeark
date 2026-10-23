@@ -5,6 +5,7 @@ import { api } from '../api'
 
 export const STUDY_LANGS = [
   { code: 'en', label: 'Inglés' },
+  { code: 'fr', label: 'Francés' },
   { code: 'de', label: 'Alemán' },
   { code: 'zh', label: 'Chino' },
   { code: 'es', label: 'Español' },
@@ -13,7 +14,7 @@ export const STUDY_LANGS = [
 export type StudyLang = (typeof STUDY_LANGS)[number]['code']
 
 export function isStudyLang(value: unknown): value is StudyLang {
-  return value === 'en' || value === 'de' || value === 'zh' || value === 'es'
+  return value === 'en' || value === 'fr' || value === 'de' || value === 'zh' || value === 'es'
 }
 
 export function studyLangLabel(code: StudyLang): string {

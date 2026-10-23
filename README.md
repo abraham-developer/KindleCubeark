@@ -161,7 +161,7 @@ El lector PDF tiene dos vistas (se cambian en la barra de opciones):
 
 El **estudio bilingüe** es opcional y vive sobre la vista por bloques:
 intercala pantallas completas —un bloque en original, el mismo traducido
-(inglés, alemán, chino o español), y así— para estudiar el idioma mientras
+(inglés, francés, alemán, chino o español), y así— para estudiar el idioma mientras
 lees (las imágenes ocupan una sola pantalla, no se traducen). El progreso
 se guarda por pantalla (`{page, block, blockCount, face}`) y al reabrir
 retomas la exacta; al desactivarlo vuelves a lectura normal en el mismo
@@ -169,6 +169,16 @@ bloque. Traduce con
 LibreTranslate autohospedado (Argos Translate, 100% open source y offline);
 la app lo usa por `POST /api/translate`, que valida sesión y reenvía al
 motor.
+
+El **modo typing** (solo escritorio, con teclado físico) convierte el texto
+de cada libro en práctica palabra por palabra estilo typing.com: lecciones
+de 30 palabras, PPM y precisión en vivo, puntuación al cerrar cada lección
+y retomado exacto por libro. Incluye modo bilingüe con glosa de la palabra
+actual y traducción de la lección (también al francés), teclado en pantalla
+según el layout elegido (QWERTY español/inglés, AZERTY francés, QWERTZ
+alemán o Dvorak) con dedo sugerido, y el historial de puntuaciones por
+libro guardado en el servidor (`typing_progress` / `typing_scores`). Se
+entra desde el menú `⋯` de cada libro → «Modo typing (escritorio)».
 
 En la vista por bloques, cada página se separa por posición: el texto va
 como bloques refluidos y cada imagen ocupa su propio bloque, intercalados
