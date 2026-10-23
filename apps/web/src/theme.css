@@ -719,3 +719,32 @@ button, a { touch-action: manipulation; }
 .typing-notice p { margin: 0; line-height: 1.6; color: var(--ink-soft); }
 .typing-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 @media (max-width: 1023px), (pointer: coarse) { .typing-layout { grid-template-columns: 1fr; } }
+
+/* Hoja de typing dentro del lector: a mitad de pantalla sobre la vista por
+   bloques (PDF) o centrada sobre la sección (EPUB). */
+.typing-sheet {
+  width: 100%; max-width: 46rem; flex: none; margin-block: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  background: var(--paper-raised); border: 1px solid var(--line); border-radius: 4px;
+  box-shadow: 0 1px 2px var(--shadow), 0 10px 28px var(--shadow);
+  padding: 22px 26px;
+}
+.typing-sheet-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.typing-sheet-head { font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin-right: auto; }
+.typing-sheet-bar label { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--ink-soft); }
+.typing-sheet-bar select { font-family: var(--serif); font-size: .9rem; padding: 6px 8px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+.typing-sheet-count { font-size: .82rem; color: var(--ink-soft); }
+.typing-sheet-stage { outline: none; cursor: text; border-top: 1px solid var(--line); padding-top: 14px; }
+.typing-sheet-stage:focus { border-top-color: var(--accent); }
+.typing-sheet-result h2 { margin: 0 0 8px; font-weight: 400; }
+.typing-sheet-result p { margin: 0 0 12px; line-height: 1.6; }
+.typing-sheet .typing-keyboard { border: 0; padding: 4px 0 0; background: transparent; }
+.typing-overlay {
+  position: absolute; inset: 0; z-index: 4; overflow-y: auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; padding: 20px; background: color-mix(in srgb, var(--paper) 88%, transparent);
+}
+.typing-overlay .typing-sheet { margin-block: 0; }
+.typing-overlay-controls { display: flex; gap: 16px; align-items: center; font-size: .88rem; }
+.typing-overlay-controls label { display: inline-flex; gap: 8px; align-items: center; }
+.typing-overlay-controls select { font-family: var(--serif); padding: 6px 8px; background: var(--paper-raised); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }

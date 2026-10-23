@@ -14,6 +14,9 @@ import AaPanel, { FONT_DEFAULT, FONT_MAX, FONT_STEP, fontFamilyStack, loadSettin
 import SelectionMenu, { HIGHLIGHT_FILL, type HighlightColor } from './SelectionMenu'
 import NoteEditor from './NoteEditor'
 import AnnotationsPanel from './AnnotationsPanel'
+import TypingSheet from './TypingSheet'
+import { STUDY_LANGS, type StudyLang } from '../lib/study'
+import { loadTypingPrefs, tokenizeText } from '../lib/typing'
 
 type ReaderProgress = { position: Position; percent: string | number } | null
 
@@ -90,6 +93,31 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   const [percent, setPercent] = useState(() => Number(progress?.percent ?? 0))
   const [chapter, setChapter] = useState<string | null>(null)
 
+  // ── Modo typing centrado sobre la sección en lectura ───────────────────
+  const [typingOn, setTypingOn] = useState(false)
+  const typingOnRef = useRef(false)
+  typingOnRef.current = typingOn
+  const [sectionIndex, setSectionIndex] = useState(0)
+  const [sectionText, setSectionText] = useState('')
+  const [typingScreen, setTypingScreen] = useState(0)
+  const [typingBilingual, setTypingBilingual] = useState(() => loadTypingPrefs().bilingual)
+  const [typingLang, setTypingLang] = useState<StudyLang>(() => loadTypingPrefs().targetLang)
+  useEffect(() => { setTypingScreen(0) }, [sectionIndex])
+  useEffect(() => {
+    if (!typingOn) return
+    let alive = true
+    const epubBook = bookRef.current as unknown as {
+      spine?: { get?: (i: number) => { load: (b: unknown) => Promise<Document | undefined>; unload?: () => void } | undefined }
+    } | null
+    const item = epubBook?.spine?.get?.(sectionIndex)
+    if (!item) { setSectionText(''); return }
+    void item.load(epubBook)
+      .then(doc => { if (alive) setSectionText((doc?.body?.textContent ?? '').replace(/\s+/g, ' ').trim()) })
+      .catch(() => { if (alive) setSectionText('') })
+      .finally(() => { try { item.unload?.() } catch { /* noop */ } })
+    return () => { alive = false }
+  }, [typingOn, sectionIndex])
+
   // ── Anotaciones (Task 14) ────────────────────────────────────────────────
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [actionError, setActionError] = useState<string | null>(null)
@@ -147,6 +175,7 @@ export default function EpubReader({ book, progress, onBack }: Props) {
     // pinta la barra lo manda el usuario, no el relocated del salto
     if (pct != null && Date.now() - sliderMovedAt.current > 500) setPercent(pct)
     setChapter(tocTitle(bookRef.current?.navigation as { toc?: NavItem[] } | undefined, start.href))
+    if (typeof start.index === 'number') setSectionIndex(start.index)
     // CFI actual: el marcador y la verificación de «página marcada» lo usan
     currentCfiRef.current = start.cfi
     setCurrentCfi(start.cfi)
@@ -466,6 +495,8 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      // en modo typing las teclas escriben la hoja: no voltean página
+      if (typingOnRef.current) return
       // si el foco está en un control (slider, botón, input…), sus teclas
       // operan el control: ←/→ mueven el slider y espacio activa el botón
       const target = e.target as HTMLElement | null
@@ -530,6 +561,13 @@ export default function EpubReader({ book, progress, onBack }: Props) {
   }
 
   const shownPercent = Math.max(0, Math.min(100, percent))
+  const typingWords = useMemo(() => tokenizeText(sectionText), [sectionText])
+  const TYPING_SCREEN_WORDS = 90
+  const typingScreenText = typingWords.slice(typingScreen * TYPING_SCREEN_WORDS, (typingScreen + 1) * TYPING_SCREEN_WORDS).join(' ')
+  const advanceTypingScreen = () => {
+    if ((typingScreen + 1) * TYPING_SCREEN_WORDS < typingWords.length) setTypingScreen(s => s + 1)
+    else turnNext()
+  }
 
   return (
     <div className="reader" data-night={night || undefined}>
@@ -553,14 +591,45 @@ export default function EpubReader({ book, progress, onBack }: Props) {
         {/* Marcador: cinta en la esquina, visible también en modo inmersivo */}
         <BookmarkButton marked={bookmarked} onToggle={() => void toggleBookmark()} />
 
-        {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
-        <button type="button" className="reader-zone left" aria-label="Página anterior"
-          onClick={guardSwipe(turnPrev)} />
-        <button type="button" className="reader-zone center"
-          aria-label={chromeVisible ? 'Ocultar controles' : 'Mostrar controles'}
-          onClick={guardSwipe(() => setChromeVisible(v => !v))} />
-        <button type="button" className="reader-zone right" aria-label="Página siguiente"
-          onClick={guardSwipe(turnNext)} />
+        {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente).
+            En typing se esconden: los clics enfocan la hoja, no voltean página. */}
+        {!typingOn && (
+          <>
+            <button type="button" className="reader-zone left" aria-label="Página anterior"
+              onClick={guardSwipe(turnPrev)} />
+            <button type="button" className="reader-zone center"
+              aria-label={chromeVisible ? 'Ocultar controles' : 'Mostrar controles'}
+              onClick={guardSwipe(() => setChromeVisible(v => !v))} />
+            <button type="button" className="reader-zone right" aria-label="Página siguiente"
+              onClick={guardSwipe(turnNext)} />
+          </>
+        )}
+
+        {typingOn && (
+          <div className="typing-overlay">
+            <div className="typing-overlay-controls">
+              <label className="typing-check">
+                <input type="checkbox" checked={typingBilingual} onChange={e => setTypingBilingual(e.target.checked)} /> Bilingüe
+              </label>
+              <label>Idioma
+                <select value={typingLang} disabled={!typingBilingual} onChange={e => setTypingLang(e.target.value as StudyLang)} aria-label="Idioma de apoyo">
+                  {STUDY_LANGS.map(l => <option key={l.code} value={l.code}>{l.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <TypingSheet
+              key={`epub-${sectionIndex}-${typingScreen}`}
+              bookId={book.id}
+              text={typingScreenText}
+              positionKey={`epub:${sectionIndex}:${typingScreen}`}
+              bilingual={typingBilingual}
+              targetLang={typingLang}
+              onNext={advanceTypingScreen}
+              nextLabel="Siguiente pantalla"
+              onExit={() => setTypingOn(false)}
+            />
+          </div>
+        )}
       </div>
 
       {/* Única salida visible de la lupa: × discreto (igual que el lector PDF) */}
@@ -575,6 +644,10 @@ export default function EpubReader({ book, progress, onBack }: Props) {
             aria-controls="aa-panel"
             onClick={() => setAaOpen(v => !v)}>
             Aa
+          </button>
+          <button type="button" className="reader-tool" aria-pressed={typingOn}
+            onClick={() => { setTypingOn(v => !v); setChromeVisible(true) }}>
+            {typingOn ? 'Typing: activado' : 'Typing'}
           </button>
           <div className="seg" role="group" aria-label="Lupa">
             <button type="button" className="reader-tool" aria-label="Reducir zoom"

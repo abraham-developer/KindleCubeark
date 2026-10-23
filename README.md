@@ -178,7 +178,11 @@ actual y traducción de la lección (también al francés), teclado en pantalla
 según el layout elegido (QWERTY español/inglés, AZERTY francés, QWERTZ
 alemán o Dvorak) con dedo sugerido, y el historial de puntuaciones por
 libro guardado en el servidor (`typing_progress` / `typing_scores`). Se
-entra desde el menú `⋯` de cada libro → «Modo typing (escritorio)».
+entra desde el menú `⋯` de cada libro → «Modo typing (escritorio)», y
+también dentro del lector con el botón «Typing» de la barra de lectura:
+ahí la práctica va sobre la hoja en lectura, siempre en vista por bloques
+y a mitad de pantalla (en EPUB, centrada sobre la sección actual), con
+puntuación guardada por libro al completar cada hoja.
 
 En la vista por bloques, cada página se separa por posición: el texto va
 como bloques refluidos y cada imagen ocupa su propio bloque, intercalados

@@ -32,6 +32,7 @@ import SelectionMenu, { type HighlightColor } from './SelectionMenu'
 import NoteEditor from './NoteEditor'
 import AnnotationsPanel from './AnnotationsPanel'
 import DictPopover from './DictPopover'
+import TypingSheet from './TypingSheet'
 
 const { getDocument, GlobalWorkerOptions } = pdfjs
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -698,6 +699,38 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     if (next) setViewAndPersist('blocks') // el estudio vive sobre los bloques
   }, [studyOn, setViewAndPersist])
 
+  // ── Modo typing sobre la hoja en lectura (siempre en vista por bloques,
+  // a mitad de pantalla, como el estudio bilingüe) ────────────────────────
+  const [typingOn, setTypingOn] = useState(false)
+  const typingOnRef = useRef(false)
+  typingOnRef.current = typingOn
+  const toggleTyping = useCallback(() => {
+    const next = !typingOnRef.current
+    setTypingOn(next)
+    if (next) {
+      setViewAndPersist('blocks') // el typing vive sobre los bloques
+      setFace('orig')
+      setChromeVisible(true)
+    }
+  }, [setViewAndPersist])
+
+  /** Avanza un bloque (sin la cara de traducción del estudio): lo usa la
+   *  hoja de typing al completarse para caer en el bloque siguiente. */
+  const advanceBlock = useCallback(() => {
+    if (!pageBlocks || pageBlocks.length === 0) return
+    if (block < pageBlocks.length - 1) {
+      setDirection('next')
+      setBlock(block + 1)
+      setFace('orig')
+      return
+    }
+    if (page >= numPages) return
+    setDirection('next')
+    setBlock(0)
+    setFace('orig')
+    setPage(page + 1)
+  }, [pageBlocks, block, page, numPages])
+
   // Navegación fresca para el listener global: se suscribe una sola vez y
   // lee el turno vigente por ref (un closure viejo giraría página en vez
   // de bloque justo después de extraer).
@@ -708,6 +741,8 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      // en modo typing las teclas escriben la hoja: no voltean página
+      if (typingOnRef.current) return
       // si el foco está en un control (slider, botón, input…), sus teclas
       // operan el control: ←/→ mueven el slider y espacio activa el botón
       const target = e.target as HTMLElement | null
@@ -1085,6 +1120,9 @@ export default function PdfReader({ book, progress, onBack }: Props) {
           <button type="button" className="reader-tool" aria-pressed={studyOn} onClick={toggleStudy}>
             {studyOn ? 'Estudio: activado' : 'Estudio bilingüe'}
           </button>
+          <button type="button" className="reader-tool" aria-pressed={typingOn} onClick={toggleTyping}>
+            {typingOn ? 'Typing: activado' : 'Typing'}
+          </button>
           {studyOn && (
             <select className="reader-tool reader-select" aria-label="Idioma de traducción"
               value={studyLang} onChange={e => setStudyLang(e.target.value as StudyLang)}>
@@ -1126,12 +1164,31 @@ export default function PdfReader({ book, progress, onBack }: Props) {
                 <figcaption>Imagen {imageOrdinal} de {imageTotal} · pág. {page}</figcaption>
               </figure>
             )}
-            {activeParagraphs && (!studyOn || face === 'orig') && (
+            {typingOn && activeBlock?.kind === 'image' && (
+              <div className="block-empty">
+                <p>Este bloque es una imagen: no hay texto para escribir.</p>
+                <button type="button" className="btn" onClick={advanceBlock}>Siguiente bloque</button>
+              </div>
+            )}
+            {typingOn && activeParagraphs && (
+              <TypingSheet
+                key={`typing-${page}-${block}`}
+                bookId={book.id}
+                text={blockText}
+                positionKey={`pdf:${page}:${block}`}
+                bilingual={studyOn}
+                targetLang={studyLang}
+                onNext={advanceBlock}
+                nextLabel="Siguiente bloque"
+                onExit={() => setTypingOn(false)}
+              />
+            )}
+            {!typingOn && activeParagraphs && (!studyOn || face === 'orig') && (
               <article className="block-prose">
                 {activeParagraphs.map((p, i) => <p key={i}>{p}</p>)}
               </article>
             )}
-            {activeParagraphs && studyOn && face === 'trans' && (
+            {!typingOn && activeParagraphs && studyOn && face === 'trans' && (
               <article className="block-prose" lang={studyLang}>
                 <p className="block-note">Traducción · {studyLangLabel(studyLang)}</p>
                 {translating && <p className="block-note">Traduciendo…</p>}
@@ -1172,8 +1229,9 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         {/* Marcador: cinta en la esquina, visible también en modo inmersivo */}
         <BookmarkButton marked={bookmarked} onToggle={() => void toggleBookmark()} />
 
-        {/* Con lupa las zonas se esconden: taparían el paneo del contenido */}
-        {!zoomed && (
+        {/* Con lupa las zonas se esconden: taparían el paneo del contenido.
+            En typing también: los clics enfocan la hoja, no voltean página. */}
+        {!zoomed && !typingOn && (
           <>
             {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
             <button type="button" className="reader-zone left" aria-label="Página anterior"
