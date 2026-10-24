@@ -56,6 +56,8 @@ type FakeUtterance = {
   onend: (() => void) | null; onerror: (() => void) | null
 }
 
+const tick = () => new Promise<void>(r => setTimeout(r, 0))
+
 function fakeSynth() {
   const spoken: FakeUtterance[] = []
   const synth = {
@@ -80,6 +82,7 @@ describe('speakParts (voz del navegador, sin costo)', () => {
       [{ text: 'Hola mundo', lang: 'es' }, { text: 'Hello world', lang: 'en' }],
       { synth: synth as never, createUtterance: factory as never },
     )
+    await tick() // las voces se esperan antes de hablar
     // solo arrancó el primer bloque
     expect(synth.spoken.map(u => [u.text, u.lang])).toEqual([['Hola mundo', 'es-ES']])
     synth.spoken[0].onend?.()
@@ -87,6 +90,30 @@ describe('speakParts (voz del navegador, sin costo)', () => {
       ['Hola mundo', 'es-ES'], ['Hello world', 'en-US'],
     ])
     synth.spoken[1].onend?.()
+    await expect(done).resolves.toBeUndefined()
+  })
+
+  it('no cancela en vacío antes de hablar (la cancelación asíncrona se llevaba la primera frase)', async () => {
+    const { synth, factory } = fakeSynth()
+    const done = speakParts([{ text: 'Hola mundo.', lang: 'es' }],
+      { synth: synth as never, createUtterance: factory as never })
+    await tick()
+    expect(synth.cancelled).toBe(0)
+    synth.spoken[0].onend?.()
+    await expect(done).resolves.toBeUndefined()
+  })
+
+  it('trocea el bloque por oraciones y las lee en orden', async () => {
+    const { synth, factory } = fakeSynth()
+    const done = speakParts([{ text: 'Uno. Dos. Tres.', lang: 'es' }],
+      { synth: synth as never, createUtterance: factory as never })
+    await tick()
+    expect(synth.spoken.map(u => u.text)).toEqual(['Uno.'])
+    synth.spoken[0].onend?.()
+    expect(synth.spoken.map(u => u.text)).toEqual(['Uno.', 'Dos.'])
+    synth.spoken[1].onend?.()
+    expect(synth.spoken.map(u => u.text)).toEqual(['Uno.', 'Dos.', 'Tres.'])
+    synth.spoken[2].onend?.()
     await expect(done).resolves.toBeUndefined()
   })
 

@@ -29,9 +29,84 @@ export function isSpeechSupported(): boolean {
     && typeof SpeechSynthesisUtterance !== 'undefined'
 }
 
+type VoiceLike = { lang: string; default?: boolean }
 type SynthLike = {
   speak: (utterance: SpeechSynthesisUtterance) => void
   cancel: () => void
+  speaking?: boolean
+  pending?: boolean
+  resume?: () => void
+  getVoices?: () => VoiceLike[]
+  addEventListener?: (type: 'voiceschanged', fn: () => void) => void
+  removeEventListener?: (type: 'voiceschanged', fn: () => void) => void
+}
+
+/** Voces instaladas en el navegador/sistema (puede ir vacío al principio). */
+export function getSpeechVoices(synth?: SynthLike): VoiceLike[] {
+  try {
+    const s = synth ?? (isSpeechSupported() ? window.speechSynthesis as unknown as SynthLike : undefined)
+    return s?.getVoices?.() ?? []
+  } catch { return [] }
+}
+
+/** ¿Hay alguna voz instalada para este idioma? Sin voz, el navegador «lee» en silencio. */
+export function hasSpeechVoice(lang: StudyLang, synth?: SynthLike): boolean {
+  const code = lang.toLowerCase()
+  const bcp = speechLangFor(lang).toLowerCase()
+  return getSpeechVoices(synth).some(v => {
+    const vl = v.lang.toLowerCase().replace('_', '-')
+    return vl === bcp || vl.startsWith(`${code}-`) || vl === code
+  })
+}
+
+/** Voz concreta para el idioma: exacta, luego por prefijo, luego la de defecto. */
+export function pickVoice(voices: VoiceLike[], lang: StudyLang): VoiceLike | null {
+  const code = lang.toLowerCase()
+  const bcp = speechLangFor(lang).toLowerCase()
+  const norm = (v: VoiceLike) => v.lang.toLowerCase().replace('_', '-')
+  return voices.find(v => norm(v) === bcp)
+    ?? voices.find(v => norm(v).startsWith(`${code}-`) || norm(v) === code)
+    ?? voices.find(v => v.default)
+    ?? null
+}
+
+/**
+ * Las voces cargan asíncrono (voiceschanged): si aún no hay ninguna, se
+ * espera un poco a que el navegador las anuncie antes de hablar.
+ */
+function waitForVoices(synth: SynthLike): Promise<VoiceLike[]> {
+  const now = getSpeechVoices(synth)
+  const add = synth.addEventListener
+  if (now.length > 0 || !add) return Promise.resolve(now)
+  return new Promise(resolve => {
+    const done = () => { cleanup(); resolve(getSpeechVoices(synth)) }
+    const timer = setTimeout(done, 400)
+    const cleanup = () => { clearTimeout(timer); synth.removeEventListener?.('voiceschanged', done) }
+    add.call(synth, 'voiceschanged', done)
+  })
+}
+
+const CHUNK_MAX = 180
+
+/** Trocea un texto en oraciones cortas (Chrome corta las lecturas largas). */
+export function speechChunks(text: string): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (!clean) return []
+  const sentences = clean.match(/[^.!?…]+[.!?…]+["”»']?\s*|.+$/g) ?? [clean]
+  const chunks: string[] = []
+  for (const sentence of sentences) {
+    const s = sentence.trim()
+    if (!s) continue
+    if (s.length <= CHUNK_MAX) { chunks.push(s); continue }
+    // oración kilométrica: por cláusulas/palabras sin pasar el tope
+    let current = ''
+    for (const word of s.split(/(\s+)/)) {
+      if (current && current.length + word.length > CHUNK_MAX) { chunks.push(current.trim()); current = '' }
+      current += word
+    }
+    if (current.trim()) chunks.push(current.trim())
+  }
+  return chunks
 }
 
 export type SpeechPart = { text: string; lang: StudyLang }
@@ -59,27 +134,47 @@ export function stopSpeaking(synth?: SynthLike): void {
  * arranca solo cuando termina la anterior. Sin soporte, resuelve sin hacer
  * nada. Una parte que falla no bloquea a la siguiente.
  */
-export function speakParts(parts: SpeechPart[], options: SpeakOptions = {}): Promise<void> {
-  const queue = parts.filter(p => p.text.trim().length > 0)
-  if (queue.length === 0) return Promise.resolve()
-  const synth = options.synth ?? (isSpeechSupported() ? window.speechSynthesis : undefined)
-  if (!synth) return Promise.resolve()
+// Chrome recolecta las utterances sin referencia viva y la lectura muere
+// en silencio: se retienen aquí hasta que terminan.
+const liveUtterances = new Set<SpeechSynthesisUtterance>()
+
+export async function speakParts(parts: SpeechPart[], options: SpeakOptions = {}): Promise<void> {
+  // la cola se expande por oraciones: bloque → frases en orden, idioma a idioma
+  const queue: SpeechPart[] = parts.flatMap(p =>
+    speechChunks(p.text).map(text => ({ text, lang: p.lang })))
+  if (queue.length === 0) return
+  const synth = options.synth ?? (isSpeechSupported() ? window.speechSynthesis as unknown as SynthLike : undefined)
+  if (!synth) return
   const factory = options.createUtterance ?? defaultUtterance
   const rate = options.rate ?? 0.92
-  try { synth.cancel() } catch { /* nada en curso */ }
-  return new Promise(resolve => {
+  const voices = await waitForVoices(synth)
+  // Solo se cancela si hay algo sonando o en cola, y se espera un respiro:
+  // cancelar en vacío y hablar al instante hace que Chrome descarte la
+  // primera frase (la lectura «terminaba» en milisegundos sin sonar).
+  if (synth.speaking || synth.pending) {
+    try { synth.cancel() } catch { /* nada en curso */ }
+    await new Promise(r => setTimeout(r, 60))
+  }
+  try { synth.resume?.() } catch { /* no estaba en pausa */ }
+  await new Promise<void>(resolve => {
     let index = 0
     const next = () => {
       if (index >= queue.length) { resolve(); return }
       const part = queue[index++]
       let utterance: SpeechSynthesisUtterance
       try {
-        utterance = factory(part.text.trim(), speechLangFor(part.lang))
+        utterance = factory(part.text, speechLangFor(part.lang))
       } catch { next(); return }
+      const voice = pickVoice(voices, part.lang)
+      if (voice) {
+        try { (utterance as { voice?: unknown }).voice = voice } catch { /* voz de defecto */ }
+      }
       utterance.rate = rate
-      utterance.onend = next
-      utterance.onerror = next
-      try { synth.speak(utterance) } catch { next() }
+      liveUtterances.add(utterance)
+      const done = () => { liveUtterances.delete(utterance); next() }
+      utterance.onend = done
+      utterance.onerror = done
+      try { synth.speak(utterance) } catch { done() }
     }
     next()
   })

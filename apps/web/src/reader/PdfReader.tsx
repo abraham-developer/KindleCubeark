@@ -944,9 +944,11 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const dictBusy = () => Date.now() - dictHoldAt.current < 1200 || Date.now() - dictClosedAt.current < 400
 
   // Controles donde la pulsación larga no aplica (las zonas de tap sí: son
-  // transparentes al dedo y la palabra vive debajo de ellas).
+  // transparentes al dedo y la palabra vive debajo de ellas). Botones y el
+  // panel de pronunciación incluidos: mantener pulsado «Escuchar…» no debe
+  // buscar «Escuchar» en el diccionario.
   const holdBlocked = (target: HTMLElement | null) =>
-    target?.closest?.('.bookmark-ribbon, .dict-popover, .selection-menu, .note-editor, .annotations-panel, input, select, textarea') != null
+    target?.closest?.('button, .bookmark-ribbon, .dict-popover, .selection-menu, .note-editor, .annotations-panel, .pron-panel, input, select, textarea') != null
 
   // ── Selección de texto sobre el textLayer (mouseup con puntero fino) ──
   // Con puntero fino (mouse) las zonas de tap dejan de capturar los eventos
@@ -1207,11 +1209,13 @@ export default function PdfReader({ book, progress, onBack }: Props) {
                 {!translating && !transError && translationParagraphs.map((p, i) => <p key={i}>{p}</p>)}
               </article>
             )}
-            {!typingOn && activeParagraphs && (
+            {/* Pronunciación solo con el estudio bilingüe activo: sin él no
+                aparece ni el «Cómo se pronuncia». */}
+            {studyOn && !typingOn && activeParagraphs && (
               <PronunciationPanel
                 key={`pron-${page}-${block}`}
                 originalText={blockText}
-                translatedText={studyOn ? translation : null}
+                translatedText={translation}
                 targetLang={studyLang}
               />
             )}

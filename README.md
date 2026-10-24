@@ -183,12 +183,14 @@ Sirve en «Mis libros» y en la «Biblioteca global».
 
 ## Pronunciación por bloques (estudio)
 
-Bajo cada bloque de texto (solo vista por bloques) hay un panel
-**Pronunciación**, pensado como práctica estilo estudio:
+Con el estudio bilingüe activo, bajo cada bloque de texto (solo vista por
+bloques) hay un panel **Pronunciación**, pensado como práctica estilo
+estudio. Sin estudio activo el panel no aparece. La pareja de idiomas sale
+del propio modo bilingüe, sin selectores extra: el original por defecto y
+el idioma de traducción ya elegido en la barra de estudio.
 
 - **Escuchar original**, **Escuchar traducción** y **Escuchar ambos**
-  (primero un idioma y al terminar el otro). Puedes elegir el idioma del
-  texto original; el de la traducción es el del estudio bilingüe.
+  (primero un idioma y al terminar el otro).
 - **Cómo se pronuncia**: guía fonética escrita de referencia de las
   primeras palabras del bloque en ambos idiomas — sílabas en español
   («ho·la») y transcripción aproximada con sonidos del español para

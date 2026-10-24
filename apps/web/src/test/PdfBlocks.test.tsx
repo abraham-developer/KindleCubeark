@@ -218,12 +218,19 @@ describe('PdfReader por bloques', () => {
 
     // escuchar ambos lee primero el original (es-ES) y al terminar la traducción (de-DE)
     fireEvent.click(screen.getByRole('button', { name: /escuchar ambos/i }))
+    await act(async () => { await realSleep(0) }) // la voz espera a las voces del sistema
     expect(spoken.map(u => u.lang)).toEqual(['es-ES'])
     expect(spoken[0].text).toContain('Línea 01:')
-    await act(async () => { spoken[0].onend?.() })
-    expect(spoken.map(u => u.lang)).toEqual(['es-ES', 'de-DE'])
-    expect(spoken[1].text).toBe('Der Garten blüht im Aprilregen.')
-    await act(async () => { spoken[1].onend?.() })
+    // el original va por frases (todas es-ES) y al agotarse entra la traducción
+    for (let i = 0; i < 40 && spoken[spoken.length - 1].lang !== 'de-DE'; i++) {
+      const last = spoken[spoken.length - 1]
+      await act(async () => { last.onend?.() })
+    }
+    expect(spoken.slice(0, -1).every(u => u.lang === 'es-ES')).toBe(true)
+    expect(spoken[spoken.length - 1].lang).toBe('de-DE')
+    expect(spoken[spoken.length - 1].text).toBe('Der Garten blüht im Aprilregen.')
+    const last = spoken[spoken.length - 1]
+    await act(async () => { last.onend?.() })
     delete (window as unknown as { speechSynthesis?: unknown }).speechSynthesis
   }, 15_000)
 
@@ -235,6 +242,10 @@ describe('PdfReader por bloques', () => {
     expect(await screen.findByText('Bloque 1 de 3')).toBeInTheDocument()
     expect(screen.queryByText('Traducción · Inglés')).not.toBeInTheDocument()
     expect(translate).not.toHaveBeenCalled()
+    // sin estudio bilingüe no aparece la pronunciación ni su guía
+    expect(screen.queryByText('Pronunciación')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cómo se pronuncia/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /escuchar/i })).not.toBeInTheDocument()
   })
 
   it('pulsación larga sobre una palabra abre el diccionario sin navegar', async () => {

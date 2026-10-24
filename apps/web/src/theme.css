@@ -749,8 +749,6 @@ button, a { touch-action: manipulation; }
 }
 .pron-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .pron-head h2 { margin: 0; font-size: 1rem; font-weight: 400; flex: 1; }
-.pron-lang { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; color: var(--ink-soft); }
-.pron-lang select { font-family: var(--serif); font-size: .9rem; padding: 6px 8px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 2px; }
 .pron-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .pron-guide-toggle { align-self: flex-start; }
 .pron-guides { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
