@@ -234,6 +234,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
   const lastSaved = useRef<string>(view === 'blocks' ? `${page}:${block}:orig` : `${page}`)
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
   const swipedAt = useRef(0)
+  const mouseNavAt = useRef(0) // el mouseup ya volteó: el click que sigue no repite
 
   const sync = useProgressSync(book.id)
 
@@ -688,6 +689,27 @@ export default function PdfReader({ book, progress, onBack }: Props) {
     setPage(t)
   }, [page, numPages, view])
 
+  // Tap en la vista por bloques: las zonas invisibles NO van sobre los
+  // bloques (tapaban los botones del panel de pronunciación y pasaban de
+  // página al tocarlos). El volteo se resuelve aquí, sobre el contenido:
+  // primero mandan los botones/controles; el texto voltea por zonas
+  // 40/20/40 y el centro muestra u oculta los controles.
+  const onBlockTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null
+    if (target?.closest?.('button, select, input, textarea, a, .pron-panel, .selection-menu, .note-editor, .annotations-panel, .dict-popover')) return
+    if (Date.now() - mouseNavAt.current < 600) return // el mouseup ya volteó
+    if (Date.now() - swipedAt.current < 400) return // fue un swipe, no un tap
+    if (dictBusy()) return
+    if (dictReq) { closeDict(); return }
+    const sel = window.getSelection()
+    if (sel && !sel.isCollapsed && sel.rangeCount > 0) return // selección en curso
+    const rect = e.currentTarget.getBoundingClientRect()
+    const xr = rect.width ? (e.clientX - rect.left) / rect.width : 0.5
+    if (xr < 0.4) turnPrev()
+    else if (xr > 0.6) turnNext()
+    else setChromeVisible(v => !v)
+  }
+
   const setViewAndPersist = useCallback((next: PdfView) => {
     setView(next)
     savePdfView(next)
@@ -943,12 +965,15 @@ export default function PdfReader({ book, progress, onBack }: Props) {
 
   const dictBusy = () => Date.now() - dictHoldAt.current < 1200 || Date.now() - dictClosedAt.current < 400
 
-  // Controles donde la pulsación larga no aplica (las zonas de tap sí: son
-  // transparentes al dedo y la palabra vive debajo de ellas). Botones y el
-  // panel de pronunciación incluidos: mantener pulsado «Escuchar…» no debe
-  // buscar «Escuchar» en el diccionario.
-  const holdBlocked = (target: HTMLElement | null) =>
-    target?.closest?.('button, .bookmark-ribbon, .dict-popover, .selection-menu, .note-editor, .annotations-panel, .pron-panel, input, select, textarea') != null
+  // Controles donde la pulsación larga no aplica. Las zonas de tap NO
+  // bloquean (son botones, pero transparentes: la palabra vive debajo y la
+  // pulsación debe buscarla); el resto de botones y el panel de
+  // pronunciación sí: mantener pulsado «Escuchar…» no busca «Escuchar».
+  const holdBlocked = (target: HTMLElement | null) => {
+    if (!target?.closest) return false
+    if (target.closest('.reader-zone')) return false
+    return target.closest('button, .bookmark-ribbon, .dict-popover, .selection-menu, .note-editor, .annotations-panel, .pron-panel, input, select, textarea') != null
+  }
 
   // ── Selección de texto sobre el textLayer (mouseup con puntero fino) ──
   // Con puntero fino (mouse) las zonas de tap dejan de capturar los eventos
@@ -978,6 +1003,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
       if (sel && !sel.isCollapsed && sel.rangeCount > 0) return
       const stage = stageRef.current
       if (!stage) return
+      mouseNavAt.current = Date.now()
       const rect = stage.getBoundingClientRect()
       const xr = rect.width ? (e.clientX - rect.left) / rect.width : 0.5
       if (xr < 0.4) turnPrev()
@@ -1147,7 +1173,7 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         onTouchEnd={onTouchEnd} onMouseDown={onStageMouseDown} onMouseMove={onStageMouseMove}
         onMouseUp={onStageMouseUp}>
         {view === 'blocks' ? (
-          <div className="block-screen" key={`${page}:${block}:${face}`}
+          <div className="block-screen" key={`${page}:${block}:${face}`} onClick={onBlockTap}
             style={{ '--block-zoom': zoom } as React.CSSProperties}>
             {pageBlocks === null && !blocksError && (
               <div className="reader-loading">Extrayendo texto…</div>
@@ -1243,8 +1269,11 @@ export default function PdfReader({ book, progress, onBack }: Props) {
         <BookmarkButton marked={bookmarked} onToggle={() => void toggleBookmark()} />
 
         {/* Con lupa las zonas se esconden: taparían el paneo del contenido.
-            En typing también: los clics enfocan la hoja, no voltean página. */}
-        {!zoomed && !typingOn && (
+            En typing también: los clics enfocan la hoja, no voltean página.
+            En bloques tampoco van: quedarían sobre el texto y los botones
+            (p. ej. Escuchar) y el tap pasaría de página; ahí voltea
+            onBlockTap sobre el propio contenido. */}
+        {!zoomed && !typingOn && view !== 'blocks' && (
           <>
             {/* Zonas de tap: 40 % izquierda (anterior), 20 % centro (controles), 40 % derecha (siguiente) */}
             <button type="button" className="reader-zone left" aria-label="Página anterior"

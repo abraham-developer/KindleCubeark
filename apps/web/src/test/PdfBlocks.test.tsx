@@ -171,8 +171,13 @@ describe('PdfReader por bloques', () => {
     expect(position).toEqual({ page: 7, block: 1, blockCount: 3, face: 'orig' })
     expect(percent).toBeCloseTo(((7 - 1) + 3 / 6) / NUM_PAGES * 100, 5)
 
-    // desactivarlo vuelve a lectura normal en el bloque actual
-    fireEvent.click(screen.getByRole('button', { name: /mostrar controles/i }))
+    // desactivarlo vuelve a lectura normal en el bloque actual: tap en el
+    // centro del texto muestra los controles (ya no hay zona invisible)
+    const screenEl = document.querySelector('.block-screen') as HTMLElement
+    vi.spyOn(screenEl, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800, x: 0, y: 0, toJSON: () => {},
+    } as DOMRect)
+    fireEvent.click(screenEl.querySelector('.block-prose p') as HTMLElement, { clientX: 500 })
     fireEvent.click(await screen.findByRole('button', { name: /estudio: activado/i }))
     expect(await screen.findByText('Bloque 2 de 3')).toBeInTheDocument()
     expect(screen.queryByText(/· traducción/i)).not.toBeInTheDocument()
@@ -228,11 +233,36 @@ describe('PdfReader por bloques', () => {
     }
     expect(spoken.slice(0, -1).every(u => u.lang === 'es-ES')).toBe(true)
     expect(spoken[spoken.length - 1].lang).toBe('de-DE')
+    // tocar «Escuchar» no voltea: sigue el mismo bloque
+    expect(screen.getByText('Bloque 1 de 3 · original')).toBeInTheDocument()
     expect(spoken[spoken.length - 1].text).toBe('Der Garten blüht im Aprilregen.')
     const last = spoken[spoken.length - 1]
     await act(async () => { last.onend?.() })
     delete (window as unknown as { speechSynthesis?: unknown }).speechSynthesis
   }, 15_000)
+
+  it('en bloques no hay zonas invisibles sobre el contenido: el tap en el texto voltea', async () => {
+    renderReader({ position: { page: 7 }, percent: '70' })
+    expect(await screen.findByText('Bloque 1 de 3')).toBeInTheDocument()
+    // las zonas de tap de la vista página no tapan los bloques (ni sus botones)
+    expect(screen.queryByRole('button', { name: 'Página siguiente' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Página anterior' })).not.toBeInTheDocument()
+
+    const screenEl = document.querySelector('.block-screen') as HTMLElement
+    vi.spyOn(screenEl, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800, x: 0, y: 0, toJSON: () => {},
+    } as DOMRect)
+    // tap a la derecha del texto: siguiente bloque
+    fireEvent.click(screen.getByText(/Línea 01:/), { clientX: 800 })
+    expect(await screen.findByText('Bloque 2 de 3')).toBeInTheDocument()
+    // tap a la izquierda del texto: bloque anterior (la pantalla se remonta: re-medir)
+    const screenEl2 = document.querySelector('.block-screen') as HTMLElement
+    vi.spyOn(screenEl2, 'getBoundingClientRect').mockReturnValue({
+      left: 0, right: 1000, top: 0, bottom: 800, width: 1000, height: 800, x: 0, y: 0, toJSON: () => {},
+    } as DOMRect)
+    fireEvent.click(screenEl2.querySelector('.block-prose p') as HTMLElement, { clientX: 100 })
+    expect(await screen.findByText('Bloque 1 de 3')).toBeInTheDocument()
+  })
 
   it('sin estudio activado no traduce ni muestra la columna traducida', async () => {
     const translate = vi.fn(async () => ({ translated_text: 'no debería verse' }))
@@ -283,6 +313,42 @@ describe('PdfReader por bloques', () => {
 
     // el mouseup que suelta la pulsación no navega: sigue el bloque 1
     fireEvent.mouseUp(stage, { button: 0, clientX: 100, clientY: 100 })
+    expect(screen.getByText('Bloque 1 de 3')).toBeInTheDocument()
+    expect(fetchStub).toHaveBeenCalled()
+  })
+
+  it('pulsación larga con el dedo sobre una palabra abre el diccionario (táctil)', async () => {
+    const fetchStub = vi.fn(async (url: string) => {
+      if (url.includes('prop=sections')) {
+        return new Response(JSON.stringify({ parse: { sections: [
+          { index: '1', level: '2', line: 'Español' },
+          { index: '2', level: '3', line: 'Sustantivo femenino' },
+        ] } }), { status: 200 })
+      }
+      if (url.includes('prop=text')) {
+        return new Response(JSON.stringify({
+          parse: { text: { '*': '<dl><dt>1</dt><dd>Lugar con plantas.</dd></dl>' } },
+        }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchStub)
+    renderReader({ position: { page: 7 }, percent: '70' })
+
+    const para = await screen.findByText(/Línea 01:/)
+    const range = document.createRange()
+    range.setStart(para.firstChild as Text, 2)
+    range.collapse(true)
+    ;(document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint = () => range
+
+    // el dedo se queda quieto sobre el texto (sin zonas invisibles encima)
+    fireEvent.touchStart(para, {
+      touches: [{ clientX: 100, clientY: 100 }],
+      changedTouches: [{ clientX: 100, clientY: 100 }],
+    })
+    expect(await screen.findByRole('dialog', { name: /significado de línea/i }, { timeout: 3000 }))
+      .toBeInTheDocument()
+    expect(await screen.findByText('Lugar con plantas.')).toBeInTheDocument()
     expect(screen.getByText('Bloque 1 de 3')).toBeInTheDocument()
     expect(fetchStub).toHaveBeenCalled()
   })
