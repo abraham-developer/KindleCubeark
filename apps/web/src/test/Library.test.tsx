@@ -124,6 +124,17 @@ describe('Library — grilla', () => {
     expect(screen.queryByTestId('book-card-b1')).not.toBeInTheDocument()
   })
 
+  it('la búsqueda predictiva sugiere sin acentos y abrir la sugerencia lee el libro', async () => {
+    apiSpies.push(...Object.values(mockApi({ listBooks: vi.fn().mockResolvedValue(books) })))
+    renderLibrary()
+    await screen.findByTestId('book-card-b1')
+    await userEvent.type(screen.getByLabelText(/buscar/i), 'garcia')
+    const list = await screen.findByRole('listbox', { name: /sugerencias/i })
+    expect(within(list).getByText('Cien años de soledad')).toBeInTheDocument()
+    await userEvent.click(within(list).getByRole('button', { name: /cien años de soledad/i }))
+    expect(await screen.findByText('pantalla de lectura')).toBeInTheDocument()
+  })
+
   it('el orden "Título" ordena alfabéticamente', async () => {
     apiSpies.push(...Object.values(mockApi({ listBooks: vi.fn().mockResolvedValue(books) })))
     renderLibrary()

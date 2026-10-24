@@ -1,9 +1,11 @@
-// apps/web/src/pages/Library.tsx — biblioteca estilo estantería: pestaña «Mis libros»
-// (grilla de estantes, seguir leyendo, subida personal/global y menú contextual)
-// y pestaña «Biblioteca global» (libros compartidos con búsqueda y adopción).
+// apps/web/src/pages/Library.tsx — biblioteca minimalista para pantalla de
+// tinta: pestaña «Mis libros» (cuadrícula simple de líneas suaves, seguir
+// leyendo, subida personal/global y menú contextual) y pestaña «Biblioteca
+// global» (libros compartidos con búsqueda predictiva y adopción).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Book, type Folder, type Visibility } from '../api'
+import { matchesQuery, searchSuggestions } from '../lib/searchPredict'
 import { useAuth } from '../state/AuthContext'
 import FolderDialog from './FolderDialog'
 
@@ -114,77 +116,66 @@ function ConfirmMenu({ book, folders, onContinue, onTyping, onReset, onMove, onV
   )
 }
 
-// ── Estantería ─────────────────────────────────────────────────────────────
-// Los libros se agrupan en filas (tantas columnas como quepan según el ancho
-// medido) y cada fila lleva su tabla de madera debajo. La altura de cada lomo
-// varía por hash del id para el look de estante real; el ancho sale de la
-// proporción 2/3 y es el mismo en el estante y en su etiqueta.
-const SHELF_HEIGHTS = [172, 192, 208, 182, 200, 164]
+// ── Cuadrícula de tinta ──────────────────────────────────────────────────
+// Sin estantes ni madera: una rejilla de celdas separadas por líneas suaves
+// de 1px (grid con fondo de línea), pensada para pantallas de tinta.
 
-function shelfHeight(id: string): number {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
-  return SHELF_HEIGHTS[h % SHELF_HEIGHTS.length]
-}
-
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
-  return out
-}
-
-function ShelfGrid({ books, renderStand, renderCaption }: {
+/** Buscador con sugerencias al escribir: tocar una abre el libro. */
+function PredictiveSearch({ label, placeholder, books, value, onChange, onPick }: {
+  label: string
+  placeholder: string
   books: Book[]
-  renderStand: (book: Book) => React.ReactNode
-  renderCaption: (book: Book) => React.ReactNode
+  value: string
+  onChange: (value: string) => void
+  onPick: (book: Book) => void
 }) {
-  const wrapRef = useRef<HTMLDivElement>(null)
-  // jsdom no mide (clientWidth 0): 4 columnas de relevo para que todo se vea
-  const [cols, setCols] = useState(4)
-  useEffect(() => {
-    const el = wrapRef.current
-    if (!el) return
-    const measure = () => {
-      const w = el.clientWidth
-      if (!w) { setCols(4); return }
-      setCols(Math.max(2, Math.min(6, Math.floor((w + 16) / (150 + 16)))))
-    }
-    measure()
-    let ro: ResizeObserver | undefined
-    if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(measure)
-      ro.observe(el)
-    }
-    window.addEventListener('resize', measure)
-    return () => { ro?.disconnect(); window.removeEventListener('resize', measure) }
-  }, [])
-  const rows = useMemo(() => chunk(books, Math.max(cols, 1)), [books, cols])
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(-1)
+  const listId = useRef(`search-list-${Math.random().toString(36).slice(2, 8)}`).current
+  const suggestions = useMemo(() => searchSuggestions(books, value), [books, value])
+  const show = open && suggestions.length > 0
+
+  const pick = (book: Book) => { setOpen(false); setActive(-1); onPick(book) }
+
   return (
-    <div className="shelves" ref={wrapRef}>
-      {rows.map((row, i) => (
-        <div className="shelf-row" key={i}>
-          <div className="shelf-stands">
-            {row.map(b => (
-              <div className="shelf-stand" key={b.id} style={{ '--book-h': `${shelfHeight(b.id)}px` } as React.CSSProperties}>
-                {renderStand(b)}
-              </div>
-            ))}
-          </div>
-          <div className="shelf-plank" aria-hidden="true" />
-          <div className="shelf-captions">
-            {row.map(b => (
-              <div className="shelf-caption" key={b.id} style={{ '--book-h': `${shelfHeight(b.id)}px` } as React.CSSProperties}>
-                {renderCaption(b)}
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+    <div className="search-wrap"
+      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false) }}>
+      <input type="search" role="combobox" aria-label={label} placeholder={placeholder}
+        aria-expanded={show} aria-controls={listId}
+        aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
+        value={value}
+        onChange={e => { onChange(e.target.value); setOpen(true); setActive(-1) }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => {
+          if (e.key === 'ArrowDown' && suggestions.length > 0) {
+            e.preventDefault(); setOpen(true); setActive(a => (a + 1) % suggestions.length)
+          } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
+            e.preventDefault(); setActive(a => (a <= 0 ? suggestions.length - 1 : a - 1))
+          } else if (e.key === 'Enter' && show && active >= 0 && suggestions[active]) {
+            e.preventDefault(); pick(suggestions[active])
+          } else if (e.key === 'Escape') {
+            setOpen(false); setActive(-1)
+          }
+        }} />
+      {show && (
+        <ul className="search-suggestions" role="listbox" id={listId} aria-label="Sugerencias">
+          {suggestions.map((b, i) => (
+            <li key={b.id} role="option" id={`${listId}-${i}`} aria-selected={i === active}>
+              <button type="button" className={i === active ? 'active' : ''}
+                onMouseDown={e => { e.preventDefault(); pick(b) }}
+                onMouseEnter={() => setActive(i)}>
+                <span className="search-suggestion-title">{b.title}</span>
+                <span className="search-suggestion-author">{b.author}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
 
-function MineStand({ book, folders, onMove, onReset, onVisibility, onDelete }: {
+function MineCard({ book, folders, onMove, onReset, onVisibility, onDelete }: {
   book: Book
   folders: Folder[]
   onMove: (bookId: string, folderId: string | null) => Promise<void>
@@ -195,8 +186,7 @@ function MineStand({ book, folders, onMove, onReset, onVisibility, onDelete }: {
   const navigate = useNavigate()
   const open = () => navigate(`/reader/${book.id}`)
   return (
-    <article className="book-card shelf-book" data-testid={`book-card-${book.id}`}
-      style={{ '--book-h': `${shelfHeight(book.id)}px` } as React.CSSProperties}
+    <article className="book-card" data-testid={`book-card-${book.id}`}
       draggable
       onDragStart={e => {
         // HTML5 DnD nativo (desktop); el menú «Mover a…» es el relevo accesible/táctil
@@ -204,15 +194,15 @@ function MineStand({ book, folders, onMove, onReset, onVisibility, onDelete }: {
         e.dataTransfer.setData('text/plain', book.id)
         e.dataTransfer.effectAllowed = 'move'
       }}>
-      <button type="button" className="book-cover shelf-cover" onClick={open} aria-label={`Abrir ${book.title}`}>
+      <button type="button" className="book-cover" onClick={open} aria-label={`Abrir ${book.title}`}>
         <Cover book={book} />
-        <span className="spine" aria-hidden="true" />
       </button>
       <ConfirmMenu book={book} folders={folders} onContinue={open} onTyping={() => navigate(`/typing/${book.id}`)} onReset={() => onReset(book)}
         onMove={folderId => onMove(book.id, folderId)}
         onVisibility={visibility => onVisibility(book, visibility)}
         onDelete={() => onDelete(book)} />
       {book.visibility === 'global' && <span className="badge-global" title="Este libro lo compartes con todos">Global</span>}
+      <MineCaption book={book} />
     </article>
   )
 }
@@ -235,17 +225,21 @@ function MineCaption({ book }: { book: Book }) {
   )
 }
 
-function GlobalStand({ book }: { book: Book }) {
+function GlobalCard({ book, adopted, adopting, onAdopt }: {
+  book: Book
+  adopted: boolean
+  adopting: boolean
+  onAdopt: (b: Book) => void
+}) {
   const navigate = useNavigate()
   return (
-    <article className="book-card shelf-book" data-testid={`global-card-${book.id}`}
-      style={{ '--book-h': `${shelfHeight(book.id)}px` } as React.CSSProperties}>
-      <button type="button" className="book-cover shelf-cover" onClick={() => navigate(`/reader/${book.id}`)}
+    <article className="book-card" data-testid={`global-card-${book.id}`}>
+      <button type="button" className="book-cover" onClick={() => navigate(`/reader/${book.id}`)}
         aria-label={`Leer ${book.title}`}>
         <Cover book={book} />
-        <span className="spine" aria-hidden="true" />
       </button>
       <span className="badge-global" title={book.owner_email ? `Compartido por ${book.owner_email}` : 'Libro global'}>Global</span>
+      <GlobalCaption book={book} adopted={adopted} adopting={adopting} onAdopt={onAdopt} />
     </article>
   )
 }
@@ -518,19 +512,17 @@ export default function Library() {
     const inFolder = foldersFailed || activeFolderId == null
       ? books
       : books.filter(b => b.folder_id === activeFolderId)
-    const q = query.trim().toLowerCase()
-    const filtered = q
-      ? inFolder.filter(b => b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q))
+    const filtered = query.trim()
+      ? inFolder.filter(b => matchesQuery(b.title, query) || matchesQuery(b.author, query))
       : inFolder
     return order === 'titulo' ? [...filtered].sort((a, b) => a.title.localeCompare(b.title, 'es')) : filtered
   }, [books, query, order, activeFolderId, foldersFailed])
 
   const globalVisible = useMemo(() => {
-    const q = globalQuery.trim().toLowerCase()
-    if (!q) return globalBooks
+    if (!globalQuery.trim()) return globalBooks
     return globalBooks.filter(b =>
-      b.title.toLowerCase().includes(q) || b.author.toLowerCase().includes(q) ||
-      (b.owner_email ?? '').toLowerCase().includes(q))
+      matchesQuery(b.title, globalQuery) || matchesQuery(b.author, globalQuery) ||
+      matchesQuery(b.owner_email ?? '', globalQuery))
   }, [globalBooks, globalQuery])
 
   const activeFolder = activeFolderId == null ? null : folders.find(f => f.id === activeFolderId) ?? null
@@ -607,8 +599,9 @@ export default function Library() {
         <div className="lib-tools">
           {tab === 'mine' && (
             <>
-              <input type="search" aria-label="Buscar" placeholder="Buscar por título o autor"
-                value={query} onChange={e => setQuery(e.target.value)} />
+              <PredictiveSearch label="Buscar" placeholder="Buscar por título o autor"
+                books={books} value={query} onChange={setQuery}
+                onPick={b => navigate(`/reader/${b.id}`)} />
               <select aria-label="Orden" value={order} onChange={e => setOrder(e.target.value as 'reciente' | 'titulo')}>
                 <option value="reciente">Reciente</option>
                 <option value="titulo">Título</option>
@@ -639,8 +632,9 @@ export default function Library() {
       {tab === 'global' ? (
         <section aria-label="Libros compartidos por todos">
           <div className="lib-tools global-search">
-            <input type="search" aria-label="Buscar en la biblioteca global" placeholder="Buscar por título, autor o quién lo compartió"
-              value={globalQuery} onChange={e => setGlobalQuery(e.target.value)} />
+            <PredictiveSearch label="Buscar en la biblioteca global" placeholder="Buscar por título, autor o quién lo compartió"
+              books={globalBooks} value={globalQuery} onChange={setGlobalQuery}
+              onPick={b => navigate(`/reader/${b.id}`)} />
           </div>
           {globalLoading && <div className="page-center">Cargando…</div>}
           {globalError && <p role="alert" className="lib-alert">{globalError}</p>}
@@ -652,11 +646,11 @@ export default function Library() {
             </div>
           )}
           {!globalLoading && !globalError && globalVisible.length > 0 && (
-            <ShelfGrid books={globalVisible}
-              renderStand={b => <GlobalStand book={b} />}
-              renderCaption={b => (
-                <GlobalCaption book={b} adopted={adopted.has(b.id)} adopting={adopting === b.id} onAdopt={adopt} />
-              )} />
+            <div className="eink-grid">
+              {globalVisible.map(b => (
+                <GlobalCard key={b.id} book={b} adopted={adopted.has(b.id)} adopting={adopting === b.id} onAdopt={adopt} />
+              ))}
+            </div>
           )}
         </section>
       ) : (
@@ -739,9 +733,9 @@ export default function Library() {
               </div>
             )
             : (
-              <ShelfGrid books={visible}
-                renderStand={b => (
-                  <MineStand book={b} folders={folders} onMove={moveBook} onVisibility={changeVisibility}
+              <div className="eink-grid">
+                {visible.map(b => (
+                  <MineCard key={b.id} book={b} folders={folders} onMove={moveBook} onVisibility={changeVisibility}
                     onReset={async book => {
                       try {
                         await api.resetProgress(book.id)
@@ -758,8 +752,8 @@ export default function Library() {
                         setNotice(`No se pudo eliminar el libro: ${errorMessage(err)}`)
                       }
                     }} />
-                )}
-                renderCaption={b => <MineCaption book={b} />} />
+                ))}
+              </div>
             )}
 
           <AddBookControl uploading={uploading} visibility={visibility} onVisibility={setVisibility} onFile={handleFile} />

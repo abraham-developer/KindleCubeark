@@ -1,8 +1,9 @@
 :root {
-  --paper: #F8F1E1; --paper-raised: #FFFBF2; --ink: #2B2A26; --ink-soft: #6B675E;
-  --accent: #B07C1F; --line: #E4D9C3; --shadow: rgba(43,42,38,.12);
+  /* Tinta electrónica: blanco/gris, líneas suaves de 1px, sin sombras. */
+  --paper: #FFFFFF; --paper-raised: #FFFFFF; --ink: #1F1F1F; --ink-soft: #666666;
+  --accent: #1F1F1F; --line: #D9D9D9; --shadow: rgba(0,0,0,0);
   --danger: #A03B2E;
-  --radius: 8px; --serif: Georgia, 'Bookerly', 'Times New Roman', serif;
+  --radius: 4px; --serif: Georgia, 'Bookerly', 'Times New Roman', serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
@@ -119,7 +120,7 @@ button, a { touch-action: manipulation; }
 .continue {
   display: flex; gap: 16px; align-items: center;
   background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: 0 2px 8px var(--shadow); padding: 16px; margin-bottom: 28px;
+  padding: 16px; margin-bottom: 28px;
 }
 .continue-cover { width: 84px; height: 120px; flex: none; border-radius: 6px; overflow: hidden; background: var(--paper); }
 .continue-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -135,14 +136,36 @@ button, a { touch-action: manipulation; }
 .progress .pct { font-size: .75rem; color: var(--ink-soft); min-width: 34px; text-align: right; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px; }
+/* Cuadrícula de tinta: celdas planas separadas por líneas suaves de 1px. */
+.eink-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1px; background: var(--line); border: 1px solid var(--line);
+}
+.eink-grid .book-card { background: var(--paper); padding: 12px; }
 .book-card { display: flex; flex-direction: column; gap: 8px; position: relative; }
 .book-cover {
   display: block; width: 100%; aspect-ratio: 2 / 3; padding: 0; cursor: pointer;
-  border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
-  background: var(--paper-raised); box-shadow: 0 2px 6px var(--shadow);
-  transition: transform .15s ease, box-shadow .15s ease;
+  border: 1px solid var(--line); border-radius: 2px; overflow: hidden;
+  background: var(--paper-raised);
 }
-.book-cover:hover { transform: translateY(-2px); box-shadow: 0 4px 12px var(--shadow); }
+.book-cover:hover { outline: 1px solid var(--ink-soft); outline-offset: -1px; }
+/* Búsqueda predictiva: sugerencias bajo el campo, lista plana de tinta. */
+.search-wrap { position: relative; flex: 1; min-width: 200px; }
+.search-wrap input { width: 100%; }
+.search-suggestions {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20;
+  list-style: none; margin: 0; padding: 0;
+  background: var(--paper-raised); border: 1px solid var(--line); border-radius: 2px;
+}
+.search-suggestions li + li { border-top: 1px solid var(--line); }
+.search-suggestions button {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  padding: 10px 12px; border: 0; background: none; cursor: pointer; color: var(--ink);
+  font-family: var(--serif);
+}
+.search-suggestions button:hover, .search-suggestions button.active { background: var(--paper); text-decoration: underline; }
+.search-suggestion-title { font-size: .95rem; }
+.search-suggestion-author { font-size: .78rem; color: var(--ink-soft); }
 .book-cover img, .book-cover .cover-fallback { width: 100%; height: 100%; }
 .book-cover img { object-fit: cover; display: block; }
 .cover-fallback {
@@ -467,8 +490,7 @@ button, a { touch-action: manipulation; }
   font-size: 1.12rem; line-height: 1.75;
   background: var(--paper-raised);
   border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: 0 1px 2px var(--shadow), 0 10px 28px var(--shadow);
+  border-radius: 2px;
   padding: 40px 44px;
   margin-bottom: 12px;
 }
@@ -566,39 +588,11 @@ button, a { touch-action: manipulation; }
 .global-search { margin-bottom: 20px; }
 .global-search input { flex: 1; min-width: 200px; }
 
-/* Estantería: filas de lomos sobre tablas de madera, con etiqueta debajo */
-.shelves { --stand-h: 224px; display: flex; flex-direction: column; gap: 30px; }
-.shelf-row { display: flex; flex-direction: column; }
-.shelf-stands, .shelf-captions { display: flex; gap: 16px; justify-content: center; }
-.shelf-stand, .shelf-caption { width: calc(var(--book-h, 190px) * 0.6667); flex: none; min-width: 0; }
-.shelf-stand { height: var(--stand-h); display: flex; align-items: flex-end; justify-content: center; }
-.shelf-book { position: relative; }
-.shelf-book .book-cover {
-  position: relative; height: var(--book-h, 190px); aspect-ratio: 2 / 3;
-  border-radius: 3px 8px 8px 3px;
-}
-.shelf-book .book-cover:hover { transform: translateY(-10px); box-shadow: 0 16px 26px var(--shadow); }
-.shelf-cover .spine {
-  position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(90deg,
-    rgba(0,0,0,.34), rgba(0,0,0,.10) 9%, rgba(255,255,255,.12) 12%,
-    transparent 18%, transparent 88%, rgba(255,255,255,.22) 96%, rgba(0,0,0,.20));
-}
-.shelf-plank {
-  height: 14px; border-radius: 2px; margin-top: 2px;
-  background:
-    linear-gradient(to bottom, rgba(255,255,255,.28), rgba(255,255,255,0) 35%, rgba(0,0,0,.30)),
-    repeating-linear-gradient(93deg, #7c4f24 0 14px, #8a5a2b 14px 26px, #74491f 26px 40px);
-  box-shadow: 0 10px 14px -6px rgba(0,0,0,.45);
-}
-.shelf-captions { margin-top: 10px; align-items: flex-start; }
-.shelf-caption .book-meta h3 {
-  font-size: .85rem;
+.eink-grid .book-meta h3 {
+  font-size: .9rem;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.shelf-caption .book-author { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.shelf-caption .progress { margin-top: 6px; }
-.shelf-caption .progress .pct { min-width: 30px; font-size: .7rem; }
+.eink-grid .book-author { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .badge-global {
   position: absolute; left: 6px; top: 6px; z-index: 2;
   font-size: .66rem; letter-spacing: .06em; text-transform: uppercase;
@@ -651,12 +645,9 @@ button, a { touch-action: manipulation; }
   .btn { min-height: 44px; }
 }
 
-/* Responsive: estante compacto en teléfono (2 columnas, lomos más bajos) */
+/* Responsive: cuadrícula compacta en teléfono (2 columnas) */
 @media (max-width: 480px) {
-  .shelves { --stand-h: 192px; gap: 24px; }
-  .shelf-stands, .shelf-captions { gap: 12px; }
-  .shelf-stand, .shelf-caption { width: calc(var(--book-h, 190px) * 0.82 * 0.6667); }
-  .shelf-book .book-cover { height: calc(var(--book-h, 190px) * 0.82); }
+  .eink-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lib-tabs [role='tab'] { padding: 10px 10px; font-size: .88rem; }
   .add-book-row { flex-wrap: wrap; }
 }
@@ -748,3 +739,21 @@ button, a { touch-action: manipulation; }
 .typing-overlay-controls { display: flex; gap: 16px; align-items: center; font-size: .88rem; }
 .typing-overlay-controls label { display: inline-flex; gap: 8px; align-items: center; }
 .typing-overlay-controls select { font-family: var(--serif); padding: 6px 8px; background: var(--paper-raised); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; }
+
+/* Pronunciación por bloques: escucha bilingüe + guía fonética (tinta, plano) */
+.pron-panel {
+  width: 100%; max-width: 40rem; flex: none;
+  border: 1px solid var(--line); border-radius: 2px;
+  background: var(--paper-raised); padding: 16px 18px; margin-bottom: 12px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.pron-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pron-head h2 { margin: 0; font-size: 1rem; font-weight: 400; flex: 1; }
+.pron-lang { display: inline-flex; align-items: center; gap: 8px; font-size: .85rem; color: var(--ink-soft); }
+.pron-lang select { font-family: var(--serif); font-size: .9rem; padding: 6px 8px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 2px; }
+.pron-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.pron-guide-toggle { align-self: flex-start; }
+.pron-guides { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.pron-guide h3 { margin: 0 0 6px; font-size: .85rem; font-weight: 400; color: var(--ink-soft); }
+.pron-guide-text { margin: 0 0 6px; font-size: 1.05rem; line-height: 1.7; overflow-wrap: break-word; }
+.pron-note { margin: 0; font-size: .82rem; line-height: 1.5; color: var(--ink-soft); }

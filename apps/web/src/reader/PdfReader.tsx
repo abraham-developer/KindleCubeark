@@ -32,6 +32,7 @@ import SelectionMenu, { type HighlightColor } from './SelectionMenu'
 import NoteEditor from './NoteEditor'
 import AnnotationsPanel from './AnnotationsPanel'
 import DictPopover from './DictPopover'
+import PronunciationPanel from './PronunciationPanel'
 import TypingSheet from './TypingSheet'
 
 const { getDocument, GlobalWorkerOptions } = pdfjs
@@ -1205,6 +1206,14 @@ export default function PdfReader({ book, progress, onBack }: Props) {
                 )}
                 {!translating && !transError && translationParagraphs.map((p, i) => <p key={i}>{p}</p>)}
               </article>
+            )}
+            {!typingOn && activeParagraphs && (
+              <PronunciationPanel
+                key={`pron-${page}-${block}`}
+                originalText={blockText}
+                translatedText={studyOn ? translation : null}
+                targetLang={studyLang}
+              />
             )}
             {blockCount > 0 && (
               <p className="block-pager">

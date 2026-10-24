@@ -1,7 +1,7 @@
 // apps/web/src/test/PdfBlocks.test.tsx — vista por bloques del PDF: parte la
 // página en minilecturas, navega por bloques, guarda el progreso a nivel de
 // bloque y muestra el estudio bilingüe solo cuando está activado.
-import { render, act, fireEvent, screen, configure } from '@testing-library/react'
+import { render, act, fireEvent, screen, configure, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Suite pesada con timers reales: margen para los findBy bajo workers en paralelo.
@@ -190,6 +190,43 @@ describe('PdfReader por bloques', () => {
     expect(await screen.findByText('Der Garten blüht.')).toBeInTheDocument()
   })
 
+  it('pronunciación por bloques: guía escrita y escucha en ambos idiomas', async () => {
+    window.localStorage.setItem('kc.study.on', '1')
+    window.localStorage.setItem('kc.study.lang', 'de')
+    const translate = vi.fn(async () => ({ translated_text: 'Der Garten blüht im Aprilregen.' }))
+    apiSpies.push(...Object.values(mockApi({ translate })))
+
+    // voz gratuita del navegador, stubbeada: registra cada utterance
+    type FakeU = { text: string; lang: string; rate: number; onend: (() => void) | null; onerror: (() => void) | null }
+    const spoken: FakeU[] = []
+    class FakeUtterance implements FakeU {
+      text: string; lang = ''; rate = 1; onend: (() => void) | null = null; onerror: (() => void) | null = null
+      constructor(text: string) { this.text = text }
+    }
+    const synth = { speak: vi.fn((u: FakeU) => { spoken.push(u) }), cancel: vi.fn() }
+    vi.stubGlobal('SpeechSynthesisUtterance', FakeUtterance)
+    Object.defineProperty(window, 'speechSynthesis', { value: synth, configurable: true })
+
+    renderReader({ position: { page: 7 }, percent: '70' })
+    expect(await screen.findByText('Bloque 1 de 3 · original')).toBeInTheDocument()
+
+    // la guía muestra cómo debería pronunciarse, en ambos idiomas
+    fireEvent.click(screen.getByRole('button', { name: /cómo se pronuncia/i }))
+    expect(await screen.findByText(/se lee como se escribe/i)).toBeInTheDocument()
+    expect(screen.getByText('Original · Español')).toBeInTheDocument()
+    expect(screen.getByText('Traducción · Alemán')).toBeInTheDocument()
+
+    // escuchar ambos lee primero el original (es-ES) y al terminar la traducción (de-DE)
+    fireEvent.click(screen.getByRole('button', { name: /escuchar ambos/i }))
+    expect(spoken.map(u => u.lang)).toEqual(['es-ES'])
+    expect(spoken[0].text).toContain('Línea 01:')
+    await act(async () => { spoken[0].onend?.() })
+    expect(spoken.map(u => u.lang)).toEqual(['es-ES', 'de-DE'])
+    expect(spoken[1].text).toBe('Der Garten blüht im Aprilregen.')
+    await act(async () => { spoken[1].onend?.() })
+    delete (window as unknown as { speechSynthesis?: unknown }).speechSynthesis
+  }, 15_000)
+
   it('sin estudio activado no traduce ni muestra la columna traducida', async () => {
     const translate = vi.fn(async () => ({ translated_text: 'no debería verse' }))
     apiSpies.push(...Object.values(mockApi({ translate })))
@@ -274,8 +311,10 @@ describe('PdfReader por bloques', () => {
     fireEvent.mouseDown(stage, { button: 0, clientX: 100, clientY: 100 })
     expect(await screen.findByText('Lugar con plantas.', {}, { timeout: 3000 })).toBeInTheDocument()
     expect(await screen.findByText('A garden.')).toBeInTheDocument()
-    expect(screen.getByText('Español')).toBeInTheDocument()
-    expect(screen.getByText('English')).toBeInTheDocument()
+    // acotado al popover: el panel de pronunciación también lista idiomas
+    const popover = document.querySelector('.dict-popover') as HTMLElement
+    expect(within(popover).getByText('Español')).toBeInTheDocument()
+    expect(within(popover).getByText('English')).toBeInTheDocument()
   })
 
   it('página mixta intercala texto e imágenes en orden de lectura', async () => {

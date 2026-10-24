@@ -170,6 +170,36 @@ LibreTranslate autohospedado (Argos Translate, 100% open source y offline);
 la app lo usa por `POST /api/translate`, que valida sesión y reenvía al
 motor.
 
+## Biblioteca de tinta y búsqueda predictiva
+
+La biblioteca ya no es una estantería: es una **cuadrícula minimalista para
+pantalla de tinta** — celdas planas en blanco y gris separadas por líneas
+suaves de 1 px, sin madera, sin sombras ni elevaciones (2 columnas en
+teléfono). La búsqueda es **predictiva**: al escribir muestra sugerencias
+ordenadas (primero el título que empieza por lo escrito) sin distinguir
+acentos ni mayúsculas («garcia» encuentra a García Márquez); tocar una
+sugerencia abre el libro, y con ↑/↓ + Enter se elige desde el teclado.
+Sirve en «Mis libros» y en la «Biblioteca global».
+
+## Pronunciación por bloques (estudio)
+
+Bajo cada bloque de texto (solo vista por bloques) hay un panel
+**Pronunciación**, pensado como práctica estilo estudio:
+
+- **Escuchar original**, **Escuchar traducción** y **Escuchar ambos**
+  (primero un idioma y al terminar el otro). Puedes elegir el idioma del
+  texto original; el de la traducción es el del estudio bilingüe.
+- **Cómo se pronuncia**: guía fonética escrita de referencia de las
+  primeras palabras del bloque en ambos idiomas — sílabas en español
+  («ho·la») y transcripción aproximada con sonidos del español para
+  inglés, francés y alemán — para escuchar, repetir y comparar.
+
+Todo es gratuito y sin cuentas: la voz es la **síntesis integrada del
+navegador** (Web Speech API; las voces las pone el sistema operativo) y la
+guía se genera en el propio navegador. Sin claves, sin backend de audio y
+sin servicios de pago. Si el navegador no trae voz, el panel lo avisa y la
+guía escrita sigue disponible. Al cambiar de bloque la lectura se detiene.
+
 El **modo typing** (solo escritorio, con teclado físico) convierte el texto
 de cada libro en práctica palabra por palabra estilo typing.com: lecciones
 de 30 palabras, PPM y precisión en vivo, puntuación al cerrar cada lección
